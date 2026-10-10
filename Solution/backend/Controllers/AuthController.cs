@@ -3,6 +3,7 @@ using Shelved.Repositories;
 using Shelved.Dtos;
 using Shelved.Models;
 
+
 namespace Shelved.Controllers;
 
 [ApiController]
@@ -16,7 +17,7 @@ public class AuthController : ControllerBase
         _repo = repo;
     }
 
-    [HttpPost("Register")]
+    [HttpPost("Register")]//endpoint for registering a new user, the route is /Auth/Register
     public async Task<ActionResult<User>> Register(RegisterDto dto)
     {
         if (await _repo.FindByUsernameAsync(dto.Username) is not null)
