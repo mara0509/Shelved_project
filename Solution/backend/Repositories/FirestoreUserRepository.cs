@@ -14,8 +14,7 @@ public class FirestoreUserRepository : IUserRepository
 
     public async Task<User?> FindByUsernameAsync(string username)
     {
-        var query = _db
-            .Collection("users")
+        var query = _db.Collection("users")
             .WhereEqualTo("Username", username)
             .Limit(1);
 
@@ -29,10 +28,9 @@ public class FirestoreUserRepository : IUserRepository
 
     public async Task<User?> FindByEmailAsync(string email)
     {
-        var query = _db
-        .Collection("users")
-        .WhereEqualTo("Email", email)
-        .Limit(1);
+        var query = _db.Collection("users")
+            .WhereEqualTo("Email", email)
+            .Limit(1);
 
         var snapshot = await query.GetSnapshotAsync();
 
@@ -44,8 +42,7 @@ public class FirestoreUserRepository : IUserRepository
 
     public async Task<bool> PasswordExistsAsync(string password)
     {
-        var query = _db
-            .Collection("users")
+        var query = _db.Collection("users")
             .WhereEqualTo("Password", password)
             .Limit(1);
 
@@ -54,7 +51,10 @@ public class FirestoreUserRepository : IUserRepository
         return snapshot.Count > 0;
     }
 
-    public async Task<User> AddAsync(string username, string email, string password)
+    public async Task<User> AddAsync(
+        string username,
+        string email,
+        string password)
     {
         var user = new User
         {
@@ -64,8 +64,12 @@ public class FirestoreUserRepository : IUserRepository
             Password = password
         };
 
-        var docRef = _db.Collection("users").Document();
-        await docRef.SetAsync(user);
+        var document = _db.Collection("users").Document();
+
+        await document.SetAsync(user);
+
+        // Keep the actual Firestore document ID on the returned user.
+        user.DocumentId = document.Id;
 
         return user;
     }

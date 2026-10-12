@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Shelved.Models;
 using Shelved.Repositories;
+using Shelved.Services;
 
 namespace Shelved.Controllers;
 
@@ -13,10 +14,11 @@ namespace Shelved.Controllers;
 public class BooksController : ControllerBase
 {
     private readonly IBookRepository _books;
-
-    public BooksController(IBookRepository books)
+    private readonly GoogleBooksService _googleBooks;
+    public BooksController(IBookRepository books, GoogleBooksService googleBooks)
     {
         _books = books;
+        _googleBooks = googleBooks;
     }
 
     [HttpPost]
@@ -74,5 +76,52 @@ public class BooksController : ControllerBase
 
         return NoContent();
     }
+
+    
+    [HttpGet]
+    public async Task<IActionResult> GetMyBooks()
+    {
+        var ownerId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+
+        if (string.IsNullOrWhiteSpace(ownerId))
+            return Forbid();
+
+        var books = await _books.GetByOwnerIdAsync(ownerId);
+
+        return Ok(books);
+    }
+
+    
+    [HttpGet("search")]
+    public async Task<IActionResult> SearchBooks(
+        [FromQuery] string q,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(q))
+            return BadRequest(new { message = "Enter a book title or author." });
+
+        try
+        {
+            var results = await _googleBooks.SearchAsync(q, cancellationToken);
+            return Ok(results);
+        }
+        catch (HttpRequestException ex)
+            when (ex.StatusCode ==
+                System.Net.HttpStatusCode.TooManyRequests)
+        {
+            return StatusCode(429, new
+            {
+                message = "Book search is temporarily rate-limited. Please wait a moment and try again."
+            });
+        }
+        catch (HttpRequestException)
+        {
+            return StatusCode(502, new
+            {
+                message = "The book search service is temporarily unavailable."
+            });
+        }
+            }
+
 
 }

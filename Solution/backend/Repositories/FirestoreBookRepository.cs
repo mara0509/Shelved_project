@@ -28,6 +28,17 @@ public class FirestoreBookRepository : IBookRepository
         return snapshot.Exists ? snapshot.ConvertTo<Book>() : null;
     }
 
+    public async Task<List<Book>> GetByOwnerIdAsync(string ownerId)
+    {
+        var snapshot = await _firestore.Collection("books")
+            .WhereEqualTo("OwnerId", ownerId)
+            .GetSnapshotAsync();
+
+        return snapshot.Documents
+            .Select(document => document.ConvertTo<Book>())
+            .ToList();
+    }
+
     public async Task UpdateAsync(string id, Book book)
     {
         await _firestore.Collection("books")

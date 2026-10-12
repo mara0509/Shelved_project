@@ -1,4 +1,3 @@
-
 using Google.Cloud.Firestore;
 
 namespace Shelved.Models;
@@ -17,4 +16,7 @@ public class Book
 
     [FirestoreProperty]
     public string OwnerId { get; set; } = string.Empty;
+
+    [FirestoreProperty]
+    public string CoverUrl { get; set; } = string.Empty;
 }

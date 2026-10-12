@@ -7,6 +7,9 @@ public class User
 {
     public Guid Id { get; set; }
 
+    [FirestoreDocumentId]
+    public string? DocumentId { get; set; }
+
     [FirestoreProperty]
     public string Username { get; set; } = "";
 

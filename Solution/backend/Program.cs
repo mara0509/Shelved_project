@@ -6,6 +6,7 @@ using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi;
 using Shelved.Authentication;
 using Microsoft.AspNetCore.Authentication;
+using Shelved.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 //connection from the firebase to our backend, that between the () is the ID of the firebase project
@@ -16,9 +17,38 @@ builder.Services.AddSingleton<FirestoreDb>(_=>FirestoreDb.Create("shelved-f3e7d"
 // Add services to the container.
 
 builder.Services.AddHttpClient();
+builder.Services.AddHttpClient<GoogleBooksService>();
+
+var jwtKey = builder.Configuration["Jwt:Key"];
+
+if (string.IsNullOrWhiteSpace(jwtKey))
+{
+    throw new InvalidOperationException(
+        "JWT signing key is missing. Set the Jwt__Key environment variable.");
+}
 
 builder.Services
-    .AddAuthentication("Google")
+    .AddAuthentication(options =>
+    {
+        options.DefaultAuthenticateScheme =
+            JwtBearerDefaults.AuthenticationScheme;
+
+        options.DefaultChallengeScheme =
+            JwtBearerDefaults.AuthenticationScheme;
+    })
+    .AddJwtBearer(options =>
+    {
+        options.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuer = false,
+            ValidateAudience = false,
+            ValidateIssuerSigningKey = true,
+            IssuerSigningKey = new SymmetricSecurityKey(
+                System.Text.Encoding.UTF8.GetBytes(jwtKey)),
+            ValidateLifetime = true,
+            ClockSkew = TimeSpan.FromMinutes(1)
+        };
+    })
     .AddScheme<AuthenticationSchemeOptions, GoogleTokenHandler>(
         "Google", _ => { });
 

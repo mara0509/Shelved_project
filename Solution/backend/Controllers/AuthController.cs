@@ -1,8 +1,11 @@
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
+using System.Text;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.IdentityModel.Tokens;
 using Shelved.Repositories;
 using Shelved.Dtos;
 using Shelved.Models;
-
 
 namespace Shelved.Controllers;
 
@@ -11,14 +14,18 @@ namespace Shelved.Controllers;
 public class AuthController : ControllerBase
 {
     private readonly IUserRepository _repo;
+    private readonly IConfiguration _configuration;
 
-    public AuthController(IUserRepository repo)
+    public AuthController(
+        IUserRepository repo,
+        IConfiguration configuration)
     {
         _repo = repo;
+        _configuration = configuration;
     }
 
-    [HttpPost("Register")]//endpoint for registering a new user, the route is /Auth/Register
-    public async Task<ActionResult<User>> Register(RegisterDto dto)
+    [HttpPost("Register")]
+    public async Task<IActionResult> Register(RegisterDto dto)
     {
         if (await _repo.FindByUsernameAsync(dto.Username) is not null)
             return Conflict("Username is already taken.");
@@ -34,21 +41,67 @@ public class AuthController : ControllerBase
             dto.Email,
             dto.Password);
 
-        return Ok(user);
+        return Ok(new
+        {
+            username = user.Username,
+            email = user.Email
+        });
     }
 
     [HttpPost("Login")]
-    public async Task<ActionResult<User>> Login(LoginDto dto)
+    public async Task<IActionResult> Login(LoginDto dto)
     {
-        var user = await _repo.FindByUsernameAsync(dto.UsernameOrEmail)
-                    ?? await _repo.FindByEmailAsync(dto.UsernameOrEmail);
+        var user =
+            await _repo.FindByUsernameAsync(dto.UsernameOrEmail)
+            ?? await _repo.FindByEmailAsync(dto.UsernameOrEmail);
 
-        if (user is null)
+        if (user is null || user.Password != dto.Password)
             return Unauthorized("Invalid username/email or password.");
 
-        if (user.Password != dto.Password)
-            return Unauthorized("Invalid username/email or password.");
+        if (string.IsNullOrWhiteSpace(user.DocumentId))
+            return StatusCode(
+                StatusCodes.Status500InternalServerError,
+                "The user account is missing its Firestore document ID.");
 
-        return Ok(user);
+        var jwtKey = _configuration["Jwt:Key"];
+
+        if (string.IsNullOrWhiteSpace(jwtKey))
+            return StatusCode(
+                StatusCodes.Status500InternalServerError,
+                "Authentication is not configured.");
+
+        var claims = new[]
+        {
+            new Claim(
+                ClaimTypes.NameIdentifier,
+                user.DocumentId),
+            new Claim(ClaimTypes.Name, user.Username),
+            new Claim(ClaimTypes.Email, user.Email)
+        };
+
+        var key = new SymmetricSecurityKey(
+            Encoding.UTF8.GetBytes(jwtKey));
+
+        var credentials = new SigningCredentials(
+            key,
+            SecurityAlgorithms.HmacSha256);
+
+        var token = new JwtSecurityToken(
+            claims: claims,
+            expires: DateTime.UtcNow.AddHours(1),
+            signingCredentials: credentials);
+
+        var tokenString = new JwtSecurityTokenHandler()
+            .WriteToken(token);
+
+        return Ok(new
+        {
+            token = tokenString,
+            user = new
+            {
+                username = user.Username,
+                email = user.Email
+            }
+        });
     }
 }
