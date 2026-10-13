@@ -73,4 +73,44 @@ public class FirestoreUserRepository : IUserRepository
 
         return user;
     }
+
+    
+    public async Task DeleteByDocumentIdAsync(string documentId)
+    {
+        await _db.Collection("users")
+            .Document(documentId)
+            .DeleteAsync();
+    }
+
+    public async Task<User?> FindByDocumentIdAsync(string documentId)
+    {
+        var snapshot = await _db.Collection("users")
+            .Document(documentId)
+            .GetSnapshotAsync();
+
+        return snapshot.Exists ? snapshot.ConvertTo<User>() : null;
+    }
+
+
+    public async Task UpdateAccountAsync(
+    string documentId,
+    string username,
+    string email,
+    string? password,
+    int readingGoal)
+    {
+        var updates = new Dictionary<string, object>
+        {
+            { "Username", username },
+            { "Email", email },
+            { "ReadingGoal", readingGoal }  
+        };
+
+        if (!string.IsNullOrWhiteSpace(password))
+            updates["Password"] = password;
+
+        await _db.Collection("users")
+            .Document(documentId)
+            .UpdateAsync(updates);
+    }
 }

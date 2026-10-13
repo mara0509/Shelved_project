@@ -21,6 +21,7 @@ public class BooksController : ControllerBase
         _googleBooks = googleBooks;
     }
 
+
     [HttpPost]
     public async Task<IActionResult> Create(Book book)
     {
@@ -32,32 +33,75 @@ public class BooksController : ControllerBase
         book.Id = null;
         book.OwnerId = ownerId;
 
+        book.Status = "To read";
+        book.Rating = 0;
+        book.CurrentPage = 0;
+
+        if (book.PageCount < 0)
+            return BadRequest("Page count cannot be negative.");
+
         var id = await _books.AddAsync(book);
 
-        return Ok(new { id, book.Title, book.Author, book.OwnerId });
+        return Ok(new
+        {
+            id,
+            book.Title,
+            book.Author,
+            book.CoverUrl,
+            book.OwnerId
+        });
     }
 
+
+    
     
     [HttpPut("{id}")]
-    public async Task<IActionResult> Update(string id, Book updatedBook)
+    public async Task<IActionResult> Update(
+        string id,
+        Book updatedBook)
     {
         var book = await _books.GetByIdAsync(id);
 
         if (book is null)
             return NotFound();
 
-        var ownerId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        var ownerId = User.FindFirstValue(
+            ClaimTypes.NameIdentifier);
 
-        if (book.OwnerId != ownerId)
+        if (string.IsNullOrWhiteSpace(ownerId) ||
+            book.OwnerId != ownerId)
+        {
             return Forbid();
+        }
 
         book.Title = updatedBook.Title;
         book.Author = updatedBook.Author;
+        book.CoverUrl = updatedBook.CoverUrl;
+        book.Description = updatedBook.Description;
+        book.PageCount = Math.Max(0, updatedBook.PageCount);
+
+        book.CurrentPage = Math.Clamp(
+            updatedBook.CurrentPage,
+            0,
+            book.PageCount > 0 ? book.PageCount : int.MaxValue);
+
+        if (updatedBook.Status is "To read"
+            or "Currently reading"
+            or "Finished")
+        {
+            book.Status = updatedBook.Status;
+        }
+
+        if (updatedBook.Rating is >= 0 and <= 5)
+        {
+            book.Rating = updatedBook.Rating;
+        }
 
         await _books.UpdateAsync(id, book);
 
-        return NoContent();
+        return Ok(book);
     }
+
 
     [HttpDelete("{id}")]
     public async Task<IActionResult> Delete(string id)

@@ -24,7 +24,28 @@ type ShelvedBook = {
 
   CoverUrl?: string
 
+  ownerId?: string
+
+  OwnerId?: string
+
+  status?: string
+
+  Status?: string
+
+  rating?: number
+
+  Rating?: number
+
+  description?: string
+  Description?: string
+  pageCount?: number
+  PageCount?: number
+  currentPage?: number
+  CurrentPage?: number
+
 }
+
+type ReadingStatus = 'To read' | 'Currently reading' | 'Finished'
 
 
 
@@ -116,6 +137,10 @@ function App() {
 
   const [profileEmail, setProfileEmail] = useState('')
 
+  const [profilePassword, setProfilePassword] = useState('')
+  const [profileMessage, setProfileMessage] = useState('')
+  const [isSavingProfile, setIsSavingProfile] = useState(false)
+  const [readingGoal, setReadingGoal] = useState(12)
 
 
 
@@ -125,6 +150,12 @@ function App() {
 
 
   const [books, setBooks] = useState<ShelvedBook[]>([])
+
+  const [bookFilter, setBookFilter] = useState('All')
+  const [bookSearch, setBookSearch] = useState('')
+  const [selectedBookId, setSelectedBookId] = useState<string | null>(null)
+  const [bookUpdateMessage, setBookUpdateMessage] = useState('')
+  const [updatingBook, setUpdatingBook] = useState(false)
 
   const [booksLoading, setBooksLoading] = useState(false)
 
@@ -388,11 +419,78 @@ function App() {
 
   }
 
+  const updateBook = async (
+    book: ShelvedBook,
+    changes: {
+      status?: ReadingStatus
+      rating?: number
+      currentPage?: number
+      pageCount?: number
+    },
+  ) => {
+    const id = book.id ?? book.Id
+
+    if (!authToken || !id) {
+      setBookUpdateMessage('Could not identify this book. Refresh your library.')
+      return
+    }
+
+    setUpdatingBook(true)
+    setBookUpdateMessage('')
+
+    const title = book.title ?? book.Title ?? 'Untitled'
+    const author = book.author ?? book.Author ?? 'Unknown author'
+    const coverUrl = book.coverUrl ?? book.CoverUrl ?? ''
+
+    const updatedBook = {
+      title,
+      author,
+      coverUrl,
+      description: book.description ?? book.Description ?? '',
+      status: changes.status ?? book.status ?? book.Status ?? 'To read',
+      rating: changes.rating ?? book.rating ?? book.Rating ?? 0,
+      currentPage:
+        changes.currentPage ?? book.currentPage ?? book.CurrentPage ?? 0,
+      pageCount: changes.pageCount ?? book.pageCount ?? book.PageCount ?? 0,
+    }
+
+    try {
+      const response = await fetch(`/Books/${encodeURIComponent(id)}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`,
+        },
+        body: JSON.stringify(updatedBook),
+      })
+
+      if (!response.ok) {
+        const message = await response.text()
+        throw new Error(message || `Could not update book (${response.status}).`)
+      }
+
+      setBooks((current) =>
+        current.map((item) =>
+          (item.id ?? item.Id) === id
+            ? { ...item, ...updatedBook, id }
+            : item,
+        ),
+      )
+
+      setBookUpdateMessage('Book updated successfully.')
+    } catch (error) {
+      setBookUpdateMessage(
+        error instanceof Error ? error.message : 'Could not update this book.',
+      )
+    } finally {
+      setUpdatingBook(false)
+    }
+  }
 
 
   useEffect(() => {
 
-    if (isLoggedIn && authToken && activePage === 'Your Books') {
+    if (isLoggedIn && authToken && (activePage === 'Your Books' || activePage === 'Home')) {
 
       void loadMyBooks(authToken)
 
@@ -521,22 +619,19 @@ function App() {
         },
 
        body: JSON.stringify({
-
-                      title,
-
-                      author,
-
-                      coverUrl: (
-
-                        result.volumeInfo?.imageLinks?.thumbnail ??
-
-                        result.volumeInfo?.imageLinks?.smallThumbnail ??
-
-                        ''
-
-                      ).replace('http\://', 'https\://'),
-
-                    }),
+         title,
+         author,
+         coverUrl: (
+           result.volumeInfo?.imageLinks?.thumbnail ??
+           result.volumeInfo?.imageLinks?.smallThumbnail ??
+           ''
+         ).replace('http://', 'https://'),
+         description: result.volumeInfo?.description ?? '',
+         pageCount: result.volumeInfo?.pageCount ?? 0,
+         currentPage: 0,
+         status: 'To read',
+         rating: 0,
+       }),
 
       })
 
@@ -720,11 +815,10 @@ function App() {
 
           username: string
 
-
-
           email: string
 
-
+          readingGoal?: number
+          ReadingGoal?: number
 
         }
 
@@ -753,6 +847,7 @@ function App() {
         setProfileUsername(loginData.user.username)
 
         setProfileEmail(loginData.user.email)
+        setReadingGoal(loginData.user.readingGoal ?? loginData.user.ReadingGoal ?? 12)
 
         setIsLoggedIn(true)
 
@@ -802,7 +897,114 @@ function App() {
 
   }
 
+  const saveProfile = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
 
+    if (!authToken) {
+      setProfileMessage('Please log in again.')
+      return
+    }
+
+    setIsSavingProfile(true)
+    setProfileMessage('')
+
+    try {
+      const response = await fetch('/Auth/UpdateAccount', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({
+          username: profileUsername.trim(),
+          email: profileEmail.trim(),
+          password: profilePassword || null,
+          readingGoal,
+        }),
+      })
+
+      const responseText = await response.text()
+
+      if (!response.ok) {
+        let message = responseText
+        try {
+          const parsed = JSON.parse(responseText)
+          message =
+            typeof parsed === 'string'
+              ? parsed
+              : parsed.message ?? parsed.title ?? responseText
+        } catch {
+          // Keep the server response text.
+        }
+
+        throw new Error(message || `Save failed (${response.status}).`)
+      }
+
+      const saved = JSON.parse(responseText) as {
+        username: string
+        email: string
+        readingGoal?: number
+      }
+
+      setProfileUsername(saved.username)
+      setProfileEmail(saved.email)
+      setReadingGoal(saved.readingGoal ?? readingGoal)
+      setProfilePassword('')
+      setProfileMessage('Profile changes saved successfully.')
+    } catch (error) {
+      setProfileMessage(
+        error instanceof Error
+          ? error.message
+          : 'Could not save profile changes.',
+      )
+    } finally {
+      setIsSavingProfile(false)
+    }
+  }
+
+  const deleteAccount = async () => {
+    if (!authToken) {
+      setLoginMessage('Please log in again before deleting your account.');
+      return;
+    }
+
+    const confirmed = window.confirm(
+      'Permanently delete your Shelved account and all your saved books? This cannot be undone.'
+    );
+
+    if (!confirmed) return;
+
+    try {
+      const response = await fetch('/Auth/DeleteAccount', {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${authToken}`,
+        },
+      });
+
+      if (!response.ok) {
+        const message = await response.text();
+        throw new Error(message || `Deletion failed (${response.status}).`);
+      }
+
+      // Clear the local session after successful deletion.
+      setAuthToken(null);
+      setIsLoggedIn(false);
+      setProfileUsername('');
+      setProfileEmail('');
+      setBooks([]);
+      setSearchResults([]);
+      setAddedBookIds([]);
+      setActivePage('Home');
+      setLoginMessage('Your account and saved books have been deleted.');
+    } catch (error) {
+      window.alert(
+        error instanceof Error
+          ? error.message
+          : 'Could not delete your account. Please try again.'
+      );
+    }
+  };
 
   if (isLoggedIn)
 
@@ -1146,7 +1348,7 @@ function App() {
 
 
 
-            <h1>{activePage === 'Home' ? 'Welcome to Shelved.' : activePage}</h1>
+            <h1>{activePage === 'Home' ? `Welcome back, ${profileUsername || 'reader'}.` : activePage}</h1>
 
 
 
@@ -1158,7 +1360,7 @@ function App() {
 
 
 
-                ? 'Your reading space, ready to make your own.'
+                ? 'Here is a look at your reading life so far.'
 
 
 
@@ -1195,107 +1397,577 @@ function App() {
 
 
             {activePage === 'Your Books' ? (
+              <section style={{ width: '100%' }}>
+                {(() => {
+                  const getTitle = (book: ShelvedBook) =>
+                    book.title ?? book.Title ?? 'Untitled'
 
-              <section className="empty-page" aria-live="polite">
+                  const getAuthor = (book: ShelvedBook) =>
+                    book.author ?? book.Author ?? 'Unknown author'
 
-                <div className="empty-page-icon" aria-hidden="true">▤</div>
+                  const getStatus = (book: ShelvedBook): ReadingStatus => {
+                    const status = book.status ?? book.Status
+                    return status === 'Currently reading' || status === 'Finished'
+                      ? status
+                      : 'To read'
+                  }
 
-                <h2>Your Books</h2>
+                  const getRating = (book: ShelvedBook) =>
+                    book.rating ?? book.Rating ?? 0
 
-                {booksLoading ? (
+                  const filteredBooks = books.filter((book) => {
+                    const matchesFilter =
+                      bookFilter === 'All' || getStatus(book) === bookFilter
 
-                  <p>Loading your library...</p>
+                    const query = bookSearch.trim().toLowerCase()
+                    const matchesSearch =
+                      !query ||
+                      getTitle(book).toLowerCase().includes(query) ||
+                      getAuthor(book).toLowerCase().includes(query)
 
-                ) : booksMessage ? (
+                    return matchesFilter && matchesSearch
+                  })
 
-                  <p role="alert">{booksMessage}</p>
+                  const selectedBook = books.find(
+                    (book) => (book.id ?? book.Id) === selectedBookId,
+                  )
 
-                ) : books.length === 0 ? (
+                  const counts = {
+                    All: books.length,
+                    'Currently reading': books.filter(
+                      (book) => getStatus(book) === 'Currently reading',
+                    ).length,
+                    Finished: books.filter(
+                      (book) => getStatus(book) === 'Finished',
+                    ).length,
+                    'To read': books.filter(
+                      (book) => getStatus(book) === 'To read',
+                    ).length,
+                  }
 
-                  <p>Your library is empty for now. We'll add book discovery next.</p>
+                  const filters = ['All', 'Currently reading', 'Finished', 'To read']
 
-                ) : (
+                  const coverPlaceholder = (title: string) => (
+                    <div
+                      aria-label={`Cover unavailable for ${title}`}
+                      style={{
+                        width: '100%',
+                        height: '100%',
+                        minHeight: 220,
+                        display: 'grid',
+                        placeItems: 'center',
+                        padding: 20,
+                        boxSizing: 'border-box',
+                        background: '#e6eee8',
+                        color: '#315f50',
+                        textAlign: 'center',
+                        fontFamily: 'Georgia, serif',
+                        fontSize: 23,
+                      }}
+                    >
+                      {title}
+                    </div>
+                  )
 
-                  <div className="saved-books-grid">
+                  return (
+                    <>
+                      <div
+                        style={{
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'end',
+                          gap: 20,
+                          flexWrap: 'wrap',
+                          marginBottom: 26,
+                        }}
+                      >
+                        <div>
+                          <span className="eyebrow">YOUR COLLECTION</span>
+                          <h2 style={{ fontFamily: 'Georgia, serif', fontSize: 42, margin: '8px 0' }}>
+                            {selectedBook ? 'Book details' : 'Your Books'}
+                          </h2>
+                          <p style={{ margin: 0, color: '#77766f' }}>
+                            {selectedBook
+                              ? getTitle(selectedBook)
+                              : `${books.length} ${books.length === 1 ? 'book' : 'books'}, all in one thoughtful place.`}
+                          </p>
+                        </div>
 
-                      {books.map((book, index) => {
-
-                        const title = book.title ?? book.Title ?? 'Untitled'
-
-                        const author = book.author ?? book.Author ?? 'Unknown author'
-
-                        const coverUrl = book.coverUrl ?? book.CoverUrl
-
-
-
-                        return (
-
-                          <article
-
-                            className="saved-book-card"
-
-                            key={book.id ?? book.Id ?? `${title}-${index}`}
-
+                        {selectedBook && (
+                          <button
+                            type="button"
+                            className="primary-button"
+                            onClick={() => {
+                              setSelectedBookId(null)
+                              setBookUpdateMessage('')
+                            }}
                           >
+                            Back to library
+                          </button>
+                        )}
+                      </div>
 
-                            {coverUrl ? (
+                      {booksLoading ? (
+                        <p>Loading your library...</p>
+                      ) : booksMessage ? (
+                        <p role="alert">{booksMessage}</p>
+                      ) : selectedBook ? (
+                        <article
+                          style={{
+                            display: 'grid',
+                            gridTemplateColumns: 'minmax(180px, 290px) minmax(0, 1fr)',
+                            gap: 32,
+                            padding: 28,
+                            border: '1px solid #e7e5dc',
+                            borderRadius: 20,
+                            background: '#fff',
+                          }}
+                        >
+                          <div
+                            style={{
+                              height: 420,
+                              overflow: 'hidden',
+                              borderRadius: 12,
+                              background: '#e6eee8',
+                            }}
+                          >
+                            {(() => {
+                              const cover = selectedBook.coverUrl ?? selectedBook.CoverUrl
+                              return cover ? (
+                                <img
+                                  src={cover}
+                                  alt={`Cover of ${getTitle(selectedBook)}`}
+                                  onError={(event) => {
+                                    event.currentTarget.style.display = 'none'
+                                  }}
+                                  style={{
+                                    width: '100%',
+                                    height: '100%',
+                                    objectFit: 'contain',
+                                  }}
+                                />
+                              ) : (
+                                coverPlaceholder(getTitle(selectedBook))
+                              )
+                            })()}
+                          </div>
 
-                              <img
+                          <div>
+                            <span className="eyebrow">BOOK DETAILS</span>
+                            <h2 style={{ fontFamily: 'Georgia, serif', fontSize: 38 }}>
+                              {getTitle(selectedBook)}
+                            </h2>
+                            <p style={{ fontSize: 19, color: '#77766f' }}>
+                              {getAuthor(selectedBook)}
+                            </p>
 
-                                className="saved-book-cover"
+                            <hr style={{ border: 0, borderTop: '1px solid #e7e5dc', margin: '26px 0' }} />
 
-                                src={coverUrl}
+                            <label htmlFor="book-status"><strong>Reading status</strong></label>
+                            <select
+                              id="book-status"
+                              value={getStatus(selectedBook)}
+                              disabled={updatingBook}
+                              onChange={(event) =>
+                                void updateBook(selectedBook, {
+                                  status: event.target.value as ReadingStatus,
+                                })
+                              }
+                              style={{
+                                display: 'block',
+                                width: '100%',
+                                maxWidth: 320,
+                                marginTop: 10,
+                                padding: 13,
+                                border: '1px solid #deded6',
+                                borderRadius: 10,
+                                background: '#fff',
+                                font: 'inherit',
+                              }}
+                            >
+                              <option value="To read">To read</option>
+                              <option value="Currently reading">Currently reading</option>
+                              <option value="Finished">Finished</option>
+                            </select>
 
-                                alt={`Cover of ${title}`}
+                            {(() => {
+                              const currentPage =
+                                selectedBook.currentPage ?? selectedBook.CurrentPage ?? 0
+                              const pageCount =
+                                selectedBook.pageCount ?? selectedBook.PageCount ?? 0
 
-                                loading="lazy"
+                              const progress =
+                                pageCount > 0
+                                  ? Math.min(100, Math.round((currentPage / pageCount) * 100))
+                                  : 0
 
-                              />
+                              return (
+                                <section
+                                  style={{
+                                    marginTop: 24,
+                                    padding: 20,
+                                    borderRadius: 16,
+                                    background: '#f3f6f2',
+                                  }}
+                                >
+                                  <h3 style={{ marginTop: 0 }}>Your reading progress</h3>
 
-                            ) : (
+                                  <div
+                                    style={{
+                                      display: 'grid',
+                                      gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
+                                      gap: 14,
+                                    }}
+                                  >
+                                    <label>
+                                      Current page
+                                      <input
+                                        type="number"
+                                        min={0}
+                                        max={pageCount > 0 ? pageCount : undefined}
+                                        value={currentPage}
+                                        onChange={(event) => {
+                                          const value = Number(event.target.value)
+                                          setBooks((current) =>
+                                            current.map((book) =>
+                                              (book.id ?? book.Id) ===
+                                              (selectedBook.id ?? selectedBook.Id)
+                                                ? { ...book, currentPage: value }
+                                                : book,
+                                            ),
+                                          )
+                                        }}
+                                        onBlur={() => {
+                                          void updateBook(selectedBook, {
+                                            currentPage: Math.max(
+                                              0,
+                                              Math.min(
+                                                pageCount > 0 ? pageCount : Number.MAX_SAFE_INTEGER,
+                                                currentPage,
+                                              ),
+                                            ),
+                                          })
+                                        }}
+                                        style={{
+                                          display: 'block',
+                                          width: '100%',
+                                          boxSizing: 'border-box',
+                                          padding: 12,
+                                          marginTop: 8,
+                                          border: '1px solid #deded6',
+                                          borderRadius: 10,
+                                          font: 'inherit',
+                                        }}
+                                      />
+                                    </label>
 
-                              <div className="saved-book-cover-placeholder">
+                                    <label>
+                                      Total pages
+                                      <input
+                                        type="number"
+                                        min={1}
+                                        value={pageCount || ''}
+                                        placeholder="Enter total pages"
+                                        onChange={(event) => {
+                                          const value = Number(event.target.value)
+                                          setBooks((current) =>
+                                            current.map((book) =>
+                                              (book.id ?? book.Id) ===
+                                              (selectedBook.id ?? selectedBook.Id)
+                                                ? { ...book, pageCount: value }
+                                                : book,
+                                            ),
+                                          )
+                                        }}
+                                        onBlur={() => {
+                                          void updateBook(selectedBook, {
+                                            pageCount: Math.max(0, pageCount),
+                                            currentPage: Math.min(
+                                              currentPage,
+                                              pageCount > 0 ? pageCount : currentPage,
+                                            ),
+                                          })
+                                        }}
+                                        style={{
+                                          display: 'block',
+                                          width: '100%',
+                                          boxSizing: 'border-box',
+                                          padding: 12,
+                                          marginTop: 8,
+                                          border: '1px solid #deded6',
+                                          borderRadius: 10,
+                                          font: 'inherit',
+                                        }}
+                                      />
+                                    </label>
+                                  </div>
 
-                                No cover available
+                                  <div
+                                    style={{
+                                      display: 'flex',
+                                      justifyContent: 'space-between',
+                                      marginTop: 22,
+                                      marginBottom: 10,
+                                    }}
+                                  >
+                                    <span>Reading progress</span>
+                                    <strong>{pageCount > 0 ? `${progress}%` : 'Add total pages'}</strong>
+                                  </div>
 
-                              </div>
+                                  <div
+                                    style={{
+                                      height: 9,
+                                      borderRadius: 10,
+                                      background: '#dfe6df',
+                                      overflow: 'hidden',
+                                    }}
+                                  >
+                                    <div
+                                      style={{
+                                        height: '100%',
+                                        width: `${progress}%`,
+                                        background: '#315f50',
+                                        borderRadius: 10,
+                                        transition: 'width 200ms ease',
+                                      }}
+                                    />
+                                  </div>
 
+                                  <p style={{ marginBottom: 0, color: '#77766f', fontSize: 13 }}>
+                                    Enter your current page and the book's total pages to calculate progress.
+                                  </p>
+                                </section>
+                              )
+                            })()}
+
+                            <p style={{ marginTop: 28 }}>
+                              <strong>How much did you like it?</strong>
+                            </p>
+                            <div
+                              role="group"
+                              aria-label="Rate this book from one to five stars"
+                              style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}
+                            >
+                              {[1, 2, 3, 4, 5].map((star) => (
+                                <button
+                                  key={star}
+                                  type="button"
+                                  disabled={updatingBook}
+                                  aria-label={`${star} star${star === 1 ? '' : 's'}`}
+                                  aria-pressed={getRating(selectedBook) === star}
+                                  onClick={() =>
+                                    void updateBook(selectedBook, { rating: star })
+                                  }
+                                  style={{
+                                    border: 0,
+                                    background: 'transparent',
+                                    color: star <= getRating(selectedBook) ? '#c58b35' : '#d8d5ca',
+                                    fontSize: 34,
+                                    cursor: 'pointer',
+                                  }}
+                                >
+                                  ★
+                                </button>
+                              ))}
+                            </div>
+
+                            {getRating(selectedBook) === 0 && (
+                              <p style={{ color: '#77766f', fontSize: 14 }}>
+                                Tap a star to rate this book.
+                              </p>
                             )}
 
+                            {bookUpdateMessage && (
+                              <p role="status" aria-live="polite">{bookUpdateMessage}</p>
+                            )}
+                          </div>
+                        </article>
+                      ) : books.length === 0 ? (
+                        <div className="empty-page">
+                          <div className="empty-page-icon" aria-hidden="true">▤</div>
+                          <h2>Your library is waiting.</h2>
+                          <p>Visit Discover to search for books and add them here.</p>
+                          <button
+                            type="button"
+                            className="primary-button"
+                            onClick={() => setActivePage('Discover')}
+                          >
+                            Discover books
+                          </button>
+                        </div>
+                      ) : (
+                        <>
+                          <input
+                            type="search"
+                            aria-label="Search your books"
+                            placeholder="Search title or author..."
+                            value={bookSearch}
+                            onChange={(event) => setBookSearch(event.target.value)}
+                            style={{
+                              width: '100%',
+                              maxWidth: 360,
+                              padding: '14px 16px',
+                              marginBottom: 20,
+                              border: '1px solid #deded6',
+                              borderRadius: 12,
+                              background: '#fff',
+                              font: 'inherit',
+                              boxSizing: 'border-box',
+                            }}
+                          />
 
+                          <div
+                            style={{
+                              display: 'flex',
+                              gap: 10,
+                              flexWrap: 'wrap',
+                              marginBottom: 30,
+                            }}
+                          >
+                            {filters.map((filter) => (
+                              <button
+                                key={filter}
+                                type="button"
+                                onClick={() => setBookFilter(filter)}
+                                aria-pressed={bookFilter === filter}
+                                style={{
+                                  padding: '10px 16px',
+                                  borderRadius: 24,
+                                  border: '1px solid #e7e5dc',
+                                  background: bookFilter === filter ? '#315f50' : '#fff',
+                                  color: bookFilter === filter ? '#fff' : '#555950',
+                                  cursor: 'pointer',
+                                }}
+                              >
+                                {filter} <span>{counts[filter as keyof typeof counts]}</span>
+                              </button>
+                            ))}
+                          </div>
 
-                            <strong>{title}</strong>
+                          {filteredBooks.length === 0 ? (
+                            <p>No books match your search and filter.</p>
+                          ) : (
+                            <div
+                              className="saved-books-grid"
+                              style={{
+                                display: 'grid',
+                                gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))',
+                                gap: 24,
+                              }}
+                            >
+                              {filteredBooks.map((book, index) => {
+                                const title = getTitle(book)
+                                const author = getAuthor(book)
+                                const cover = book.coverUrl ?? book.CoverUrl
 
-                            <span>{author}</span>
+                                return (
+                                  <button
+                                    key={book.id ?? book.Id ?? `${title}-${index}`}
+                                    type="button"
+                                    onClick={() => {
+                                      setSelectedBookId(book.id ?? book.Id ?? null)
+                                      setBookUpdateMessage('')
+                                    }}
+                                    style={{
+                                      display: 'flex',
+                                      flexDirection: 'column',
+                                      gap: 10,
+                                      minWidth: 0,
+                                      padding: 0,
+                                      border: 0,
+                                      background: 'transparent',
+                                      textAlign: 'left',
+                                      cursor: 'pointer',
+                                      color: 'inherit',
+                                    }}
+                                  >
+                                    <div
+                                      style={{
+                                        position: 'relative',
+                                        width: '100%',
+                                        height: 260,
+                                        overflow: 'hidden',
+                                        borderRadius: 10,
+                                        background: '#e6eee8',
+                                        boxShadow: '0 10px 24px rgba(36, 47, 39, 0.10)',
+                                      }}
+                                    >
+                                      {cover ? (
+                                        <>
+                                          {coverPlaceholder(title)}
+                                          <img
+                                            src={cover}
+                                            alt={`Cover of ${title}`}
+                                            loading="lazy"
+                                            onError={(event) => {
+                                              event.currentTarget.style.display = 'none'
+                                            }}
+                                            style={{
+                                              position: 'absolute',
+                                              inset: 0,
+                                              width: '100%',
+                                              height: '100%',
+                                              objectFit: 'cover',
+                                            }}
+                                          />
+                                        </>
+                                      ) : (
+                                        coverPlaceholder(title)
+                                      )}
 
-                          </article>
+                                      <span
+                                        style={{
+                                          position: 'absolute',
+                                          bottom: 10,
+                                          left: 10,
+                                          padding: '6px 9px',
+                                          borderRadius: 20,
+                                          background: '#fff',
+                                          color: '#315f50',
+                                          fontSize: 10,
+                                          fontWeight: 700,
+                                        }}
+                                      >
+                                        {getStatus(book).toUpperCase()}
+                                      </span>
+                                    </div>
 
-                        )
+                                    <strong style={{ fontFamily: 'Georgia, serif', fontSize: 18 }}>
+                                      {title}
+                                    </strong>
+                                    <span style={{ color: '#77766f', fontSize: 14 }}>
+                                      {author}
+                                    </span>
+                                    {getRating(book) > 0 && (
+                                      <span style={{ color: '#c58b35' }}>
+                                        {'★'.repeat(getRating(book))}
+                                        <span style={{ color: '#d8d5ca' }}>
+                                          {'★'.repeat(5 - getRating(book))}
+                                        </span>
+                                      </span>
+                                    )}
+                                  </button>
+                                )
+                              })}
+                            </div>
+                          )}
+                        </>
+                      )}
 
-                        })}
-
-                    </div>
-
-                )}
-
-                <button
-
-                  className="primary-button"
-
-                  type="button"
-
-                  onClick={() => authToken && void loadMyBooks(authToken)}
-
-                  disabled={booksLoading || !authToken}
-
-                >
-
-                  {booksLoading ? 'Refreshing...' : 'Refresh library'}
-
-                </button>
-
+                      <div style={{ marginTop: 28 }}>
+                        <button
+                          className="primary-button"
+                          type="button"
+                          onClick={() => authToken && void loadMyBooks(authToken)}
+                          disabled={booksLoading || !authToken || updatingBook}
+                        >
+                          {booksLoading ? 'Refreshing...' : 'Refresh library'}
+                        </button>
+                      </div>
+                    </>
+                  )
+                })()}
               </section>
-
             ) : activePage === 'Discover' ? (
 
               <section className="empty-page discover-page" aria-live="polite">
@@ -1430,61 +2102,313 @@ function App() {
                     </div>
                     <div>
                       <h2>{profileUsername || 'Your profile'}</h2>
-                      <p>Welcome to your reading space.</p>
+                      <p>Manage your account details.</p>
                     </div>
                   </div>
 
-                  <div className="profile-fields">
-                    <div className="profile-field">
-                      <label htmlFor="profile-username">Username</label>
-                      <input id="profile-username" value={profileUsername} readOnly />
-                    </div>
-                    <div className="profile-field">
-                      <label htmlFor="profile-email">Email address</label>
-                      <input id="profile-email" type="email" value={profileEmail} readOnly />
-                    </div>
-                    <div className="profile-field">
-                      <label htmlFor="profile-age">Age band</label>
-                      <select id="profile-age" defaultValue="25–34" disabled>
-                        <option value="18–24">18–24</option>
-                        <option value="25–34">25–34</option>
-                        <option value="35–44">35–44</option>
-                        <option value="45+">45+</option>
-                      </select>
-                    </div>
-                    <div className="profile-field">
-                      <label htmlFor="profile-language">Language proficiency</label>
-                      <select id="profile-language" defaultValue="Fluent" disabled>
-                        <option value="Beginner">Beginner</option>
-                        <option value="Intermediate">Intermediate</option>
-                        <option value="Fluent">Fluent</option>
-                        <option value="Native">Native</option>
-                      </select>
-                    </div>
-                  </div>
+                  <form onSubmit={saveProfile}>
+                    <div className="profile-fields">
+                      <div className="profile-field">
+                        <label htmlFor="profile-username">Username</label>
+                        <input
+                          id="profile-username"
+                          type="text"
+                          autoComplete="username"
+                          value={profileUsername}
+                          onChange={(event) =>
+                            setProfileUsername(event.target.value)
+                          }
+                          required
+                          maxLength={50}
+                        />
+                      </div>
 
-                  <button className="primary-button" type="button" disabled>Save changes</button>
-                  <p className="profile-note">Your username and email are read-only for now.</p>
+                      <div className="profile-field">
+                        <label htmlFor="profile-email">Email address</label>
+                        <input
+                          id="profile-email"
+                          type="email"
+                          autoComplete="email"
+                          value={profileEmail}
+                          onChange={(event) =>
+                            setProfileEmail(event.target.value)
+                          }
+                          required
+                        />
+                      </div>
+
+                      <div className="profile-field">
+                        <label htmlFor="profile-password">New password</label>
+                        <input
+                          id="profile-password"
+                          type="password"
+                          autoComplete="new-password"
+                          value={profilePassword}
+                          onChange={(event) =>
+                            setProfilePassword(event.target.value)
+                          }
+                          placeholder="Leave blank to keep current password"
+                          minLength={8}
+                        />
+                      </div>
+
+                      <div className="profile-field">
+                        <label htmlFor="reading-goal">
+                          Annual reading goal
+                        </label>
+                        <input
+                          id="reading-goal"
+                          type="number"
+                          min={1}
+                          max={365}
+                          value={readingGoal}
+                          onChange={(event) =>
+                            setReadingGoal(Number(event.target.value))
+                          }
+                          required
+                        />
+                        <small>How many books would you like to finish this year?</small>
+                      </div>
+                    </div>
+
+                    <button
+                      className="primary-button"
+                      type="submit"
+                      disabled={isSavingProfile}
+                    >
+                      {isSavingProfile ? 'Saving...' : 'Save changes'}
+                    </button>
+
+                    {profileMessage && (
+                      <p role="status" aria-live="polite">
+                        {profileMessage}
+                      </p>
+                    )}
+                  </form>
                 </section>
 
                 <section className="privacy-card">
                   <h2>Privacy &amp; account</h2>
                   <div className="privacy-row">
                     <div>
-                      <strong>Delete personal data</strong>
-                      <p>Remove reading history and preference data while keeping your account.</p>
-                    </div>
-                    <button type="button" disabled>Delete personal data</button>
-                  </div>
-                  <div className="privacy-row">
-                    <div>
                       <strong>Delete account</strong>
                       <p>Permanently delete your account and all associated data.</p>
                     </div>
-                    <button className="danger-button" type="button" disabled>Delete account</button>
+                    <button
+                      className="danger-button"
+                      type="button"
+                      onClick={() => void deleteAccount()}
+                    >
+                      Delete account
+                    </button>
                   </div>
                 </section>
               </div>
+            ) : activePage === 'Home' ? (
+                        <section style={{ width: '100%', textAlign: 'left' }}>
+                          {(() => {
+                            const getStatus = (book: ShelvedBook) => {
+                              const status = book.status ?? book.Status
+                              return status === 'Currently reading' || status === 'Finished'
+                                ? status
+                                : 'To read'
+                            }
+
+                            const finished = books.filter((book) => getStatus(book) === 'Finished').length
+                            const reading = books.filter((book) => getStatus(book) === 'Currently reading').length
+                            const toRead = books.filter((book) => getStatus(book) === 'To read').length
+
+                            const goal = readingGoal > 0 ? readingGoal : 12
+                            const goalProgress = Math.min(100, Math.round((finished / goal) * 100))
+
+                            const recentBooks = books.slice(-4).reverse()
+
+                            const stats = [
+                              { label: 'Books in library', value: books.length },
+                              { label: 'Currently reading', value: reading },
+                              { label: 'Want to read', value: toRead },
+                              { label: 'Books finished', value: finished },
+                            ]
+
+                            return (
+                              <>
+                                {booksLoading && <p>Loading your library...</p>}
+                                {booksMessage && <p role="alert">{booksMessage}</p>}
+
+                                <div
+                                  style={{
+                                    display: 'grid',
+                                    gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))',
+                                    gap: 18,
+                                    marginBottom: 24,
+                                  }}
+                                >
+                                  {stats.map((stat) => (
+                                    <div
+                                      key={stat.label}
+                                      style={{
+                                        padding: 22,
+                                        border: '1px solid #e7e5dc',
+                                        borderRadius: 16,
+                                        background: '#fff',
+                                      }}
+                                    >
+                                      <div style={{ color: '#77766f', fontSize: 14 }}>{stat.label}</div>
+                                      <div
+                                        style={{
+                                          fontFamily: 'Georgia, serif',
+                                          fontSize: 40,
+                                          marginTop: 8,
+                                          color: '#315f50',
+                                        }}
+                                      >
+                                        {stat.value}
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+
+                                <div
+                                  style={{
+                                    padding: 26,
+                                    marginBottom: 32,
+                                    border: '1px solid #e7e5dc',
+                                    borderRadius: 16,
+                                    background: '#fff',
+                                  }}
+                                >
+                                  <span className="eyebrow">YOUR READING GOAL</span>
+                                  <h2 style={{ fontFamily: 'Georgia, serif', fontSize: 28, margin: '8px 0' }}>
+                                    {finished} of {goal} books finished
+                                  </h2>
+
+                                  <div
+                                    role="progressbar"
+                                    aria-valuemin={0}
+                                    aria-valuemax={100}
+                                    aria-valuenow={goalProgress}
+                                    aria-label="Reading goal progress"
+                                    style={{
+                                      height: 10,
+                                      borderRadius: 10,
+                                      background: '#dfe6df',
+                                      overflow: 'hidden',
+                                    }}
+                                  >
+                                    <div
+                                      style={{
+                                        height: '100%',
+                                        width: `${goalProgress}%`,
+                                        background: '#315f50',
+                                        borderRadius: 10,
+                                        transition: 'width 200ms ease',
+                                      }}
+                                    />
+                                  </div>
+
+                                  <p style={{ margin: '12px 0 0', color: '#77766f', fontSize: 14 }}>
+                                    {goalProgress}% of your goal. You can change your goal in Profile.
+                                  </p>
+                                </div>
+
+                                <h2 style={{ fontFamily: 'Georgia, serif', fontSize: 28, marginBottom: 16 }}>
+                                  Recently added
+                                </h2>
+
+                                {recentBooks.length === 0 ? (
+                                  <p style={{ color: '#77766f' }}>
+                                    No books yet. Visit Discover to add your first one.
+                                  </p>
+                                ) : (
+                                  <div
+                                    style={{
+                                      display: 'grid',
+                                      gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))',
+                                      gap: 22,
+                                    }}
+                                  >
+                                    {recentBooks.map((book, index) => {
+                                      const title = book.title ?? book.Title ?? 'Untitled'
+                                      const author = book.author ?? book.Author ?? 'Unknown author'
+                                      const cover = book.coverUrl ?? book.CoverUrl
+
+                                      return (
+                                        <button
+                                          key={book.id ?? book.Id ?? `${title}-${index}`}
+                                          type="button"
+                                          onClick={() => {
+                                            setSelectedBookId(book.id ?? book.Id ?? null)
+                                            setBookUpdateMessage('')
+                                            setActivePage('Your Books')
+                                          }}
+                                          style={{
+                                            display: 'flex',
+                                            flexDirection: 'column',
+                                            gap: 8,
+                                            padding: 0,
+                                            border: 0,
+                                            background: 'transparent',
+                                            textAlign: 'left',
+                                            cursor: 'pointer',
+                                            color: 'inherit',
+                                          }}
+                                        >
+                                          <div
+                                            style={{
+                                              position: 'relative',
+                                              height: 220,
+                                              overflow: 'hidden',
+                                              borderRadius: 10,
+                                              background: '#e6eee8',
+                                              boxShadow: '0 10px 24px rgba(36, 47, 39, 0.10)',
+                                            }}
+                                          >
+                                            <div
+                                              style={{
+                                                width: '100%',
+                                                height: '100%',
+                                                display: 'grid',
+                                                placeItems: 'center',
+                                                padding: 14,
+                                                boxSizing: 'border-box',
+                                                color: '#315f50',
+                                                textAlign: 'center',
+                                                fontFamily: 'Georgia, serif',
+                                              }}
+                                            >
+                                              {title}
+                                            </div>
+                                            {cover && (
+                                              <img
+                                                src={cover}
+                                                alt={`Cover of ${title}`}
+                                                loading="lazy"
+                                                onError={(event) => {
+                                                  event.currentTarget.style.display = 'none'
+                                                }}
+                                                style={{
+                                                  position: 'absolute',
+                                                  inset: 0,
+                                                  width: '100%',
+                                                  height: '100%',
+                                                  objectFit: 'cover',
+                                                }}
+                                              />
+                                            )}
+                                          </div>
+                                          <strong style={{ fontFamily: 'Georgia, serif', fontSize: 16 }}>
+                                            {title}
+                                          </strong>
+                                          <span style={{ color: '#77766f', fontSize: 13 }}>{author}</span>
+                                        </button>
+                                      )
+                                    })}
+                                  </div>
+                                )}
+                              </>
+                            )
+                          })()}
+                        </section>
             ) : (
               <div className="empty-page">
                 <div className="empty-page-icon" aria-hidden="true">▤</div>

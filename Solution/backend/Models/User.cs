@@ -19,7 +19,12 @@ public class User
     [FirestoreProperty]
     public string Password { get; set; } = "";
 
+
+    [FirestoreProperty]
+    public int ReadingGoal { get; set; } = 12;
+
     public User()
     {
     }
+
 }

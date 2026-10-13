@@ -6,6 +6,7 @@ using Microsoft.IdentityModel.Tokens;
 using Shelved.Repositories;
 using Shelved.Dtos;
 using Shelved.Models;
+using Microsoft.AspNetCore.Authorization;
 
 namespace Shelved.Controllers;
 
@@ -15,14 +16,17 @@ public class AuthController : ControllerBase
 {
     private readonly IUserRepository _repo;
     private readonly IConfiguration _configuration;
+    private readonly IBookRepository _bookRepo;
 
     public AuthController(
-        IUserRepository repo,
-        IConfiguration configuration)
-    {
-        _repo = repo;
-        _configuration = configuration;
-    }
+    IUserRepository repo,
+    IBookRepository bookRepo,
+    IConfiguration configuration)
+{
+    _repo = repo;
+    _bookRepo = bookRepo;
+    _configuration = configuration;
+}
 
     [HttpPost("Register")]
     public async Task<IActionResult> Register(RegisterDto dto)
@@ -104,4 +108,97 @@ public class AuthController : ControllerBase
             }
         });
     }
+
+    
+    [Authorize]
+    [HttpDelete("DeleteAccount")]
+    public async Task<IActionResult> DeleteAccount()
+    {
+        var documentId = User.FindFirst(
+            ClaimTypes.NameIdentifier)?.Value;
+
+        if (string.IsNullOrWhiteSpace(documentId))
+            return Unauthorized("Your session is invalid. Please log in again.");
+
+        // Confirm that the account still exists.
+        var account = await _repo.FindByDocumentIdAsync(documentId);
+
+        if (account is null)
+            return NotFound("The account was not found.");
+
+        // Remove the account's books first, then its user document.
+        await _bookRepo.DeleteByOwnerIdAsync(documentId);
+        await _repo.DeleteByDocumentIdAsync(documentId);
+
+        return NoContent();
+    }
+
+    
+    [Authorize]
+    [HttpPut("UpdateAccount")]
+    public async Task<IActionResult> UpdateAccount(UpdateAccountDto dto)
+    {
+        var documentId = User.FindFirst(
+            ClaimTypes.NameIdentifier)?.Value;
+
+        if (string.IsNullOrWhiteSpace(documentId))
+            return Unauthorized("Please log in again.");
+
+        var username = dto.Username.Trim();
+        var email = dto.Email.Trim();
+
+        if (string.IsNullOrWhiteSpace(username) ||
+            string.IsNullOrWhiteSpace(email))
+        {
+            return BadRequest("Username and email are required.");
+        }
+
+        // Validate the reading goal BEFORE saving anything.
+        if (dto.ReadingGoal < 1 || dto.ReadingGoal > 365)
+        {
+            return BadRequest(
+                "Reading goal must be between 1 and 365 books.");
+        }
+
+        var account = await _repo.FindByDocumentIdAsync(documentId);
+
+        if (account is null)
+            return NotFound("Account not found.");
+
+        var existingUsername =
+            await _repo.FindByUsernameAsync(username);
+
+        if (existingUsername is not null &&
+            existingUsername.DocumentId != documentId)
+        {
+            return Conflict("Username is already taken.");
+        }
+
+        var existingEmail =
+            await _repo.FindByEmailAsync(email);
+
+        if (existingEmail is not null &&
+            existingEmail.DocumentId != documentId)
+        {
+            return Conflict("Email is already registered.");
+        }
+
+        await _repo.UpdateAccountAsync(
+            documentId,
+            username,
+            email,
+            string.IsNullOrWhiteSpace(dto.Password)
+                ? null
+                : dto.Password,
+            dto.ReadingGoal);
+
+        return Ok(new
+        {
+            username,
+            email,
+            readingGoal = dto.ReadingGoal
+        });
+    }
+
+
 }

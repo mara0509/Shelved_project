@@ -52,4 +52,26 @@ public class FirestoreBookRepository : IBookRepository
             .Document(id)
             .DeleteAsync();
     }
+
+    
+    public async Task DeleteByOwnerIdAsync(string ownerId)
+    {
+        var snapshot = await _firestore.Collection("books")
+            .WhereEqualTo("OwnerId", ownerId)
+            .GetSnapshotAsync();
+
+        // Firestore batches allow at most 500 operations.
+        foreach (var chunk in snapshot.Documents.Chunk(400))
+        {
+            var batch = _firestore.StartBatch();
+
+            foreach (var document in chunk)
+            {
+                batch.Delete(document.Reference);
+            }
+
+            await batch.CommitAsync();
+        }
+    }
+
 }

@@ -10,4 +10,5 @@ public interface IBookRepository
     Task<List<Book>> GetByOwnerIdAsync(string ownerId);
     Task UpdateAsync(string id, Book book);
     Task DeleteAsync(string id);
+    Task DeleteByOwnerIdAsync(string ownerId);
 }
