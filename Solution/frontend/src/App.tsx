@@ -47,10 +47,29 @@ type ShelvedBook = {
 
 type ReadingStatus = 'To read' | 'Currently reading' | 'Finished'
 
+type ReadingList = {
+  id?: string
+  Id?: string
+  ownerId?: string
+  OwnerId?: string
+  name?: string
+  Name?: string
+  description?: string
+  Description?: string
+  isShared?: boolean
+  IsShared?: boolean
+  bookIds?: string[]
+  BookIds?: string[]
+  createdAt?: string
+  CreatedAt?: string
+}
 
+type ReadingListDetail = {
+  list: ReadingList
+  books: ShelvedBook[]
+}
 
 type GoogleBookResult = {
-
   id: string
 
   volumeInfo?: {
@@ -150,6 +169,15 @@ function App() {
 
 
   const [books, setBooks] = useState<ShelvedBook[]>([])
+  const [readingLists, setReadingLists] = useState<ReadingList[]>([])
+  const [listsLoading, setListsLoading] = useState(false)
+  const [listsMessage, setListsMessage] = useState('')
+  const [showCreateList, setShowCreateList] = useState(false)
+  const [newListName, setNewListName] = useState('')
+  const [newListDescription, setNewListDescription] = useState('')
+  const [selectedList, setSelectedList] = useState<ReadingListDetail | null>(null)
+  const [listActionLoading, setListActionLoading] = useState(false)
+  const [bookToAdd, setBookToAdd] = useState('')
 
   const [bookFilter, setBookFilter] = useState('All')
   const [bookSearch, setBookSearch] = useState('')
@@ -359,11 +387,18 @@ function App() {
 
 
 
-  const loadMyBooks = async (token: string) => {
+  const loadMyBooks = async (token: string) => 
+  {
 
     setBooksLoading(true)
 
     setBooksMessage('')
+
+    if (!token) {
+      setBooksMessage('Please log in again to view your books.')
+      setBooksLoading(false)
+      return
+    }
 
 
 
@@ -373,7 +408,7 @@ function App() {
 
         headers: {
 
-          Authorization: `Bearer ${token}`,
+          Authorization: `Bearer ${authToken}`,
 
         },
 
@@ -417,6 +452,226 @@ function App() {
 
     }
 
+  }
+
+  const loadReadingLists = async () => {
+    if (!authToken) {
+      setListsMessage('Please log in again to view your reading lists.')
+      return
+    }
+
+    setListsLoading(true)
+    setListsMessage('')
+
+    try {
+      const response = await fetch('/ReadingLists', {
+        headers: { Authorization: `Bearer ${authToken}` },
+      })
+
+      if (!response.ok) {
+        throw new Error(`Could not load reading lists (${response.status}).`)
+      }
+
+      const data = (await response.json()) as ReadingList[]
+      setReadingLists(data)
+    } catch (error) {
+      setListsMessage(
+        error instanceof Error ? error.message : 'Could not load reading lists.',
+      )
+    } finally {
+      setListsLoading(false)
+    }
+  }
+
+  const createReadingList = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+
+    if (!authToken || !newListName.trim()) {
+      setListsMessage('Please enter a list name.')
+      return
+    }
+
+    setListActionLoading(true)
+    setListsMessage('')
+
+    try {
+      const response = await fetch('/ReadingLists', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({
+          name: newListName.trim(),
+          description: newListDescription.trim(),
+          isShared: false,
+        }),
+      })
+
+      if (!response.ok) {
+        const message = await response.text()
+        throw new Error(message || `Could not create list (${response.status}).`)
+      }
+
+      const created = (await response.json()) as ReadingList
+      setReadingLists((current) => [created, ...current])
+      setNewListName('')
+      setNewListDescription('')
+      setShowCreateList(false)
+      setListsMessage('Reading list created successfully.')
+    } catch (error) {
+      setListsMessage(
+        error instanceof Error ? error.message : 'Could not create this list.',
+      )
+    } finally {
+      setListActionLoading(false)
+    }
+  }
+
+  const openReadingList = async (list: ReadingList) => {
+    const id = list.id ?? list.Id
+
+    if (!authToken || !id) return
+
+    setListActionLoading(true)
+    setListsMessage('')
+
+    try {
+      const response = await fetch(`/ReadingLists/${encodeURIComponent(id)}`, {
+        headers: { Authorization: `Bearer ${authToken}` },
+      })
+
+      if (!response.ok) {
+        throw new Error(`Could not open list (${response.status}).`)
+      }
+
+      const detail = (await response.json()) as ReadingListDetail
+      setSelectedList(detail)
+    } catch (error) {
+      setListsMessage(
+        error instanceof Error ? error.message : 'Could not open this list.',
+      )
+    } finally {
+      setListActionLoading(false)
+    }
+  }
+
+  const addBookToReadingList = async () => {
+    if (!authToken || !selectedList || !bookToAdd) return
+
+    const listId = selectedList.list.id ?? selectedList.list.Id
+    if (!listId) return
+
+    setListActionLoading(true)
+    setListsMessage('')
+
+    try {
+      const response = await fetch(
+        `/ReadingLists/${encodeURIComponent(listId)}/books/${encodeURIComponent(bookToAdd)}`,
+        {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${authToken}` },
+        },
+      )
+
+      if (!response.ok) {
+        const message = await response.text()
+        throw new Error(message || 'Could not add book to list.')
+      }
+
+      setBookToAdd('')
+      await openReadingList(selectedList.list)
+      setListsMessage('Book added to the list.')
+    } catch (error) {
+      setListsMessage(
+        error instanceof Error ? error.message : 'Could not add this book.',
+      )
+    } finally {
+      setListActionLoading(false)
+    }
+  }
+
+  const removeBookFromReadingList = async (bookId: string) => {
+    if (!authToken || !selectedList) return
+
+    const listId = selectedList.list.id ?? selectedList.list.Id
+    if (!listId) return
+
+    setListActionLoading(true)
+    setListsMessage('')
+
+    try {
+      const response = await fetch(
+        `/ReadingLists/${encodeURIComponent(listId)}/books/${encodeURIComponent(bookId)}`,
+        {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${authToken}` },
+        },
+      )
+
+      if (!response.ok) {
+        throw new Error('Could not remove book from list.')
+      }
+
+      setSelectedList((current) =>
+        current
+          ? {
+              ...current,
+              books: current.books.filter(
+                (book) => (book.id ?? book.Id) !== bookId,
+              ),
+            }
+          : null,
+      )
+      setListsMessage('Book removed from the list.')
+    } catch (error) {
+      setListsMessage(
+        error instanceof Error ? error.message : 'Could not remove this book.',
+      )
+    } finally {
+      setListActionLoading(false)
+    }
+  }
+
+  const deleteReadingList = async (list: ReadingList) => {
+    if (!authToken) return
+
+    const id = list.id ?? list.Id
+    if (!id) return
+
+    if (!window.confirm(`Delete "${list.name ?? list.Name ?? 'this list'}"?`)) {
+      return
+    }
+
+    setListActionLoading(true)
+    setListsMessage('')
+
+    try {
+      const response = await fetch(`/ReadingLists/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${authToken}` },
+      })
+
+      if (!response.ok) {
+        throw new Error('Could not delete this reading list.')
+      }
+
+      setReadingLists((current) =>
+        current.filter((item) => (item.id ?? item.Id) !== id),
+      )
+
+      if ((selectedList?.list.id ?? selectedList?.list.Id) === id) {
+        setSelectedList(null)
+      }
+
+      setListsMessage('Reading list deleted.')
+    } catch (error) {
+      setListsMessage(
+        error instanceof Error ? error.message : 'Could not delete this list.',
+      )
+    } finally {
+      setListActionLoading(false)
+    }
   }
 
   const updateBook = async (
@@ -490,10 +745,14 @@ function App() {
 
   useEffect(() => {
 
-    if (isLoggedIn && authToken && (activePage === 'Your Books' || activePage === 'Home')) {
+    if (isLoggedIn && authToken) {
+      if (activePage === 'Your Books' || activePage === 'Home') {
+        void loadMyBooks(authToken)
+      }
 
-      void loadMyBooks(authToken)
-
+      if (activePage === 'Lists') {
+        void loadReadingLists()
+      }
     }
 
   }, [isLoggedIn, authToken, activePage])
@@ -828,21 +1087,12 @@ function App() {
 
 
 
-      if (!loginData.token) {
-
-
-
-        throw new Error('Login succeeded, but the server did not return a token.')
-
-
-
-      }
-
-
-
-
-
+      
+        if (!loginData.token) {
+          throw new Error('Login succeeded, but the server did not return a token.')
+        }
         setAuthToken(loginData.token)
+
 
         setProfileUsername(loginData.user.username)
 
@@ -1014,31 +1264,15 @@ function App() {
 
 
 
-    const menuItems = [
+    
+const menuItems = [
+  { name: 'Home', icon: '\u2302' },
+  { name: 'Your Books', icon: '\u25A4' },
+  { name: 'Discover', icon: '\u2022' },
+  { name: 'Lists', icon: '\u2637' },
+  { name: 'Profile', icon: '\u2661' },
+]
 
-
-
-      { name: 'Home', icon: '⌂' },
-
-
-
-      { name: 'Your Books', icon: '▤' },
-
-
-
-      { name: 'Discover', icon: '⌕' },
-
-
-
-      { name: 'Lists', icon: '☷' },
-
-
-
-      { name: 'Profile', icon: '♙' },
-
-
-
-    ]
 
 
 
@@ -1136,7 +1370,7 @@ function App() {
 
 
 
-            <span className="sidebar-logo" aria-hidden="true">▮▮</span>
+            <span className="sidebar-logo" aria-hidden="true">â–®â–®</span>
 
 
 
@@ -1244,7 +1478,7 @@ function App() {
 
 
 
-              <span className="nav-icon" aria-hidden="true">↪</span>
+              <span className="nav-icon" aria-hidden="true">â†ª</span>
 
 
 
@@ -1766,7 +2000,7 @@ function App() {
                                     cursor: 'pointer',
                                   }}
                                 >
-                                  ★
+                                  â˜…
                                 </button>
                               ))}
                             </div>
@@ -1784,7 +2018,7 @@ function App() {
                         </article>
                       ) : books.length === 0 ? (
                         <div className="empty-page">
-                          <div className="empty-page-icon" aria-hidden="true">▤</div>
+                          <div className="empty-page-icon" aria-hidden="true">â–¤</div>
                           <h2>Your library is waiting.</h2>
                           <p>Visit Discover to search for books and add them here.</p>
                           <button
@@ -1940,9 +2174,9 @@ function App() {
                                     </span>
                                     {getRating(book) > 0 && (
                                       <span style={{ color: '#c58b35' }}>
-                                        {'★'.repeat(getRating(book))}
+                                        {'â˜…'.repeat(getRating(book))}
                                         <span style={{ color: '#d8d5ca' }}>
-                                          {'★'.repeat(5 - getRating(book))}
+                                          {'â˜…'.repeat(5 - getRating(book))}
                                         </span>
                                       </span>
                                     )}
@@ -1968,7 +2202,354 @@ function App() {
                   )
                 })()}
               </section>
-            ) : activePage === 'Discover' ? (
+             ) : activePage === 'Lists' ? (
+  <section style={{ width: '100%', textAlign: 'left' }}>
+    {(() => {
+      const getListId = (list: ReadingList) => list.id ?? list.Id ?? ''
+      const getListName = (list: ReadingList) =>
+        list.name ?? list.Name ?? 'Untitled list'
+      const getListDescription = (list: ReadingList) =>
+        list.description ?? list.Description ?? ''
+      const getListBookCount = (list: ReadingList) =>
+        (list.bookIds ?? list.BookIds ?? []).length
+
+      const booksInSelectedList = new Set<string>(
+        (selectedList?.books ?? [])
+          .map((book) => book.id ?? book.Id)
+          .filter((id): id is string => Boolean(id)),
+      )
+
+      const availableBooks = books.filter((book) => {
+        const id = book.id ?? book.Id
+        if (!id) {
+          return false
+        }
+        return !booksInSelectedList.has(id)
+      })
+
+      const inputStyle = {
+        display: 'block',
+        width: '100%',
+        boxSizing: 'border-box' as const,
+        padding: '13px 15px',
+        marginTop: 8,
+        border: '1px solid #deded6',
+        borderRadius: 10,
+        background: '#fff',
+        font: 'inherit',
+      }
+
+      const cardStyle = {
+        display: 'flex',
+        flexDirection: 'column' as const,
+        gap: 10,
+        padding: 22,
+        border: '1px solid #e7e5dc',
+        borderRadius: 16,
+        background: '#fff',
+      }
+
+      return (
+        <>
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'end',
+              gap: 20,
+              flexWrap: 'wrap',
+              marginBottom: 26,
+            }}
+          >
+            <div>
+              <span className="eyebrow">YOUR COLLECTIONS</span>
+              <h2 style={{ fontFamily: 'Georgia, serif', fontSize: 38, margin: '8px 0' }}>
+                {selectedList ? getListName(selectedList.list) : 'Reading lists'}
+              </h2>
+              <p style={{ margin: 0, color: '#77766f' }}>
+                {selectedList
+                  ? getListDescription(selectedList.list) || 'No description yet.'
+                  : `${readingLists.length} ${readingLists.length === 1 ? 'list' : 'lists'}, ready for your next read.`}
+              </p>
+            </div>
+
+            {selectedList ? (
+              <button
+                type="button"
+                className="primary-button"
+                onClick={() => {
+                  setSelectedList(null)
+                  setBookToAdd('')
+                  setListsMessage('')
+                }}
+              >
+                Back to lists
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="primary-button"
+                onClick={() => {
+                  setShowCreateList((current) => !current)
+                  setListsMessage('')
+                }}
+              >
+                {showCreateList ? 'Cancel' : 'New list'}
+              </button>
+            )}
+          </div>
+
+          {listsMessage && (
+            <p role="status" aria-live="polite">{listsMessage}</p>
+          )}
+
+          {selectedList ? (
+            <>
+              <div style={{ ...cardStyle, marginBottom: 28 }}>
+                <label htmlFor="book-to-add"><strong>Add a book to this list</strong></label>
+                {availableBooks.length === 0 ? (
+                  <p style={{ margin: 0, color: '#77766f' }}>
+                    {books.length === 0
+                      ? 'Your library is empty. Add books from Discover first.'
+                      : 'All of your books are already in this list.'}
+                  </p>
+                ) : (
+                  <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                    <select
+                      id="book-to-add"
+                      value={bookToAdd}
+                      onChange={(event) => setBookToAdd(event.target.value)}
+                      disabled={listActionLoading}
+                      style={{ ...inputStyle, flex: '1 1 260px', marginTop: 0, width: 'auto' }}
+                    >
+                      <option value="">Choose a book...</option>
+                      {availableBooks.map((book) => {
+                        const id = (book.id ?? book.Id) as string
+                        const title = book.title ?? book.Title ?? 'Untitled'
+                        const author = book.author ?? book.Author ?? 'Unknown author'
+                        return (
+                          <option key={id} value={id}>
+                            {title} - {author}
+                          </option>
+                        )
+                      })}
+                    </select>
+                    <button
+                      type="button"
+                      className="primary-button"
+                      onClick={() => void addBookToReadingList()}
+                      disabled={!bookToAdd || listActionLoading}
+                      style={{ width: 'auto', minWidth: 130 }}
+                    >
+                      {listActionLoading ? 'Working...' : 'Add to list'}
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {selectedList.books.length === 0 ? (
+                <div className="empty-page">
+                  <div className="empty-page-icon" aria-hidden="true">â˜·</div>
+                  <h2>This list is empty.</h2>
+                  <p>Use the dropdown above to add books from your library.</p>
+                </div>
+              ) : (
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))',
+                    gap: 24,
+                  }}
+                >
+                  {selectedList.books.map((book, index) => {
+                    const id = book.id ?? book.Id ?? ''
+                    const title = book.title ?? book.Title ?? 'Untitled'
+                    const author = book.author ?? book.Author ?? 'Unknown author'
+                    const cover = book.coverUrl ?? book.CoverUrl
+
+                    return (
+                      <article
+                        key={id || `${title}-${index}`}
+                        style={{ display: 'flex', flexDirection: 'column', gap: 10, minWidth: 0 }}
+                      >
+                        <div
+                          style={{
+                            position: 'relative',
+                            height: 240,
+                            overflow: 'hidden',
+                            borderRadius: 10,
+                            background: '#e6eee8',
+                            boxShadow: '0 10px 24px rgba(36, 47, 39, 0.10)',
+                          }}
+                        >
+                          <div
+                            style={{
+                              width: '100%',
+                              height: '100%',
+                              display: 'grid',
+                              placeItems: 'center',
+                              padding: 16,
+                              boxSizing: 'border-box',
+                              color: '#315f50',
+                              textAlign: 'center',
+                              fontFamily: 'Georgia, serif',
+                            }}
+                          >
+                            {title}
+                          </div>
+                          {cover && (
+                            <img
+                              src={cover}
+                              alt={`Cover of ${title}`}
+                              loading="lazy"
+                              onError={(event) => {
+                                event.currentTarget.style.display = 'none'
+                              }}
+                              style={{
+                                position: 'absolute',
+                                inset: 0,
+                                width: '100%',
+                                height: '100%',
+                                objectFit: 'cover',
+                              }}
+                            />
+                          )}
+                        </div>
+                        <strong style={{ fontFamily: 'Georgia, serif', fontSize: 17 }}>
+                          {title}
+                        </strong>
+                        <span style={{ color: '#77766f', fontSize: 14 }}>{author}</span>
+                        <button
+                          type="button"
+                          onClick={() => id && void removeBookFromReadingList(id)}
+                          disabled={!id || listActionLoading}
+                          style={{
+                            alignSelf: 'flex-start',
+                            padding: '8px 14px',
+                            border: '1px solid #e7e5dc',
+                            borderRadius: 20,
+                            background: '#fff',
+                            color: '#555950',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          Remove
+                        </button>
+                      </article>
+                    )
+                  })}
+                </div>
+              )}
+            </>
+          ) : (
+            <>
+              {showCreateList && (
+                <form
+                  onSubmit={createReadingList}
+                  style={{ ...cardStyle, marginBottom: 28, maxWidth: 560 }}
+                >
+                  <label htmlFor="new-list-name"><strong>List name</strong></label>
+                  <input
+                    id="new-list-name"
+                    type="text"
+                    value={newListName}
+                    onChange={(event) => setNewListName(event.target.value)}
+                    placeholder="e.g. Summer reads"
+                    maxLength={80}
+                    required
+                    style={inputStyle}
+                  />
+
+                  <label htmlFor="new-list-description"><strong>Description (optional)</strong></label>
+                  <input
+                    id="new-list-description"
+                    type="text"
+                    value={newListDescription}
+                    onChange={(event) => setNewListDescription(event.target.value)}
+                    placeholder="What is this list for?"
+                    maxLength={200}
+                    style={inputStyle}
+                  />
+
+                  <button
+                    className="primary-button"
+                    type="submit"
+                    disabled={listActionLoading || !newListName.trim()}
+                  >
+                    {listActionLoading ? 'Creating...' : 'Create list'}
+                  </button>
+                </form>
+              )}
+
+              {listsLoading ? (
+                <p>Loading your lists...</p>
+              ) : readingLists.length === 0 ? (
+                <div className="empty-page">
+                  <div className="empty-page-icon" aria-hidden="true">â˜·</div>
+                  <h2>No reading lists yet.</h2>
+                  <p>Create your first list to group books by mood, theme or season.</p>
+                </div>
+              ) : (
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))',
+                    gap: 20,
+                  }}
+                >
+                  {readingLists.map((list, index) => {
+                    const id = getListId(list)
+                    const count = getListBookCount(list)
+
+                    return (
+                      <article key={id || `list-${index}`} style={cardStyle}>
+                        <h3 style={{ fontFamily: 'Georgia, serif', fontSize: 22, margin: 0 }}>
+                          {getListName(list)}
+                        </h3>
+                        <p style={{ margin: 0, color: '#77766f', fontSize: 14, flex: 1 }}>
+                          {getListDescription(list) || 'No description yet.'}
+                        </p>
+                        <span style={{ color: '#315f50', fontSize: 13, fontWeight: 700 }}>
+                          {count} {count === 1 ? 'BOOK' : 'BOOKS'}
+                        </span>
+                        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                          <button
+                            type="button"
+                            className="primary-button"
+                            onClick={() => void openReadingList(list)}
+                            disabled={!id || listActionLoading}
+                            style={{ width: 'auto', padding: '10px 18px' }}
+                          >
+                            Open
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void deleteReadingList(list)}
+                            disabled={!id || listActionLoading}
+                            style={{
+                              padding: '10px 18px',
+                              border: '1px solid #e7e5dc',
+                              borderRadius: 24,
+                              background: '#fff',
+                              color: '#a33b3b',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </article>
+                    )
+                  })}
+                </div>
+              )}
+            </>
+          )}
+        </>
+      )
+    })()}
+  </section>
+) : activePage === 'Discover' ? (
 
               <section className="empty-page discover-page" aria-live="polite">
 
@@ -2048,7 +2629,7 @@ function App() {
 
                             {info.publishedDate && <p style={{ margin: '0 0 8px', fontSize: 13, color: '#77766f' }}>Published {info.publishedDate}</p>}
 
-                            {info.description && <p style={{ margin: 0, fontSize: 14, lineHeight: 1.5, color: '#62645e' }}>{info.description.replace(/<[^>]\*>/g, '').slice(0, 180)}{info.description.length > 180 ? '…' : ''}</p>}
+                            {info.description && <p style={{ margin: 0, fontSize: 14, lineHeight: 1.5, color: '#62645e' }}>{info.description.replace(/<[^>]\*>/g, '').slice(0, 180)}{info.description.length > 180 ? 'â€¦' : ''}</p>}
 
                           </div>
 
@@ -2070,7 +2651,7 @@ function App() {
 
                   <div style={{ padding: '26px 12px' }}>
 
-                    <div className="empty-page-icon" aria-hidden="true">⌕</div>
+                    <div className="empty-page-icon" aria-hidden="true">âŒ•</div>
 
                     <h2>Find your next favourite read.</h2>
 
@@ -2411,7 +2992,7 @@ function App() {
                         </section>
             ) : (
               <div className="empty-page">
-                <div className="empty-page-icon" aria-hidden="true">▤</div>
+                <div className="empty-page-icon" aria-hidden="true">â–¤</div>
                 <h2>
                   {activePage === 'Home'
                     ? 'Your story starts here.'
@@ -2510,7 +3091,7 @@ function App() {
 
 
 
-          <span aria-hidden="true">▤</span>
+          <span aria-hidden="true">â–¤</span>
 
 
 
@@ -3115,3 +3696,4 @@ function App() {
 
 
 export default App
+

@@ -14,6 +14,10 @@ export default defineConfig({
         target: 'http://localhost:5085',
         changeOrigin: true,
       },
+      '/ReadingLists': {
+        target: 'http://localhost:5085',
+        changeOrigin: true,
+      },
     },
   },
 })

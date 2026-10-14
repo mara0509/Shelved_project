@@ -55,6 +55,7 @@ builder.Services
 builder.Services.AddAuthorization();
 builder.Services.AddAuthorization();
 builder.Services.AddSingleton<IBookRepository, FirestoreBookRepository>();
+builder.Services.AddSingleton<IReadingListRepository, FirestoreReadingListRepository>();
 
 
 
