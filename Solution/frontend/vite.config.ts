@@ -14,7 +14,15 @@ export default defineConfig({
         target: 'http://localhost:5085',
         changeOrigin: true,
       },
+      '/BookCatalog': {
+        target: 'http://localhost:5085',
+        changeOrigin: true,
+      },
       '/ReadingLists': {
+        target: 'http://localhost:5085',
+        changeOrigin: true,
+      },
+      '/AdminUsers': {
         target: 'http://localhost:5085',
         changeOrigin: true,
       },

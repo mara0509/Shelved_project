@@ -1,6 +1,8 @@
 
 using Google.Cloud.Firestore;
 using Shelved.Models;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace Shelved.Repositories;
 
@@ -19,6 +21,31 @@ public class FirestoreBookRepository : IBookRepository
         return document.Id;
     }
 
+    public Task<(string Id, bool AlreadyExists)> AddCatalogBookAsync(
+        Book book,
+        string catalogBookId)
+    {
+        var stableDocumentId = Convert.ToHexString(
+            SHA256.HashData(
+                Encoding.UTF8.GetBytes($"{book.OwnerId}\0{catalogBookId}")));
+        var document = _firestore.Collection("books")
+            .Document(stableDocumentId);
+        book.Id = stableDocumentId;
+        book.CatalogBookId = catalogBookId;
+
+        return _firestore.RunTransactionAsync(async transaction =>
+        {
+            var existing = await transaction.GetSnapshotAsync(document);
+            if (existing.Exists)
+            {
+                return (existing.Id, true);
+            }
+
+            transaction.Create(document, book);
+            return (stableDocumentId, false);
+        });
+    }
+
     public async Task<Book?> GetByIdAsync(string id)
     {
         var snapshot = await _firestore.Collection("books")
@@ -26,6 +53,14 @@ public class FirestoreBookRepository : IBookRepository
             .GetSnapshotAsync();
 
         return snapshot.Exists ? snapshot.ConvertTo<Book>() : null;
+    }
+
+    public async Task<List<Book>> GetAllAsync()
+    {
+        var snapshot = await _firestore.Collection("books").GetSnapshotAsync();
+        return snapshot.Documents
+            .Select(document => document.ConvertTo<Book>())
+            .ToList();
     }
 
     public async Task<List<Book>> GetByOwnerIdAsync(string ownerId)

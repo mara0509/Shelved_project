@@ -15,10 +15,16 @@ public class BooksController : ControllerBase
 {
     private readonly IBookRepository _books;
     private readonly GoogleBooksService _googleBooks;
-    public BooksController(IBookRepository books, GoogleBooksService googleBooks)
+    private readonly ICatalogBookRepository _catalog;
+
+    public BooksController(
+        IBookRepository books,
+        GoogleBooksService googleBooks,
+        ICatalogBookRepository catalog)
     {
         _books = books;
         _googleBooks = googleBooks;
+        _catalog = catalog;
     }
 
 
@@ -32,6 +38,7 @@ public class BooksController : ControllerBase
 
         book.Id = null;
         book.OwnerId = ownerId;
+        book.CatalogBookId = null;
 
         book.Status = "To read";
         book.Rating = 0;
@@ -49,6 +56,52 @@ public class BooksController : ControllerBase
             book.Author,
             book.CoverUrl,
             book.OwnerId
+        });
+    }
+
+    [HttpPost("from-catalog/{catalogBookId}")]
+    public async Task<IActionResult> AddFromCatalog(string catalogBookId)
+    {
+        var ownerId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (string.IsNullOrWhiteSpace(ownerId))
+            return Forbid();
+
+        var catalogBook = await _catalog.GetByIdAsync(catalogBookId);
+        if (catalogBook is null)
+            return NotFound(new { message = "Catalog book not found." });
+
+        var book = new Book
+        {
+            OwnerId = ownerId,
+            CatalogBookId = catalogBookId,
+            Title = catalogBook.Title,
+            Author = string.Join(", ", catalogBook.Authors),
+            CoverUrl = catalogBook.CoverImageUrl,
+            Description = catalogBook.Description,
+            Status = "To read",
+            Rating = 0,
+            PageCount = 0,
+            CurrentPage = 0
+        };
+
+        var (id, alreadyExists) = await _books.AddCatalogBookAsync(
+            book,
+            catalogBookId);
+
+        return Ok(new
+        {
+            id,
+            catalogBookId,
+            title = book.Title,
+            author = book.Author,
+            coverUrl = book.CoverUrl,
+            ownerId,
+            status = book.Status,
+            rating = book.Rating,
+            description = book.Description,
+            pageCount = book.PageCount,
+            currentPage = book.CurrentPage,
+            alreadyInLibrary = alreadyExists
         });
     }
 
@@ -137,6 +190,7 @@ public class BooksController : ControllerBase
 
     
     [HttpGet("search")]
+    [Authorize(Roles = Shelved.Models.User.AdminRole)]
     public async Task<IActionResult> SearchBooks(
         [FromQuery] string q,
         CancellationToken cancellationToken)

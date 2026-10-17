@@ -28,6 +28,10 @@
 
     OwnerId?: string
 
+    catalogBookId?: string
+
+    CatalogBookId?: string
+
     status?: string
 
     Status?: string
@@ -81,29 +85,55 @@
 
   type GoogleBookResult = {
     id: string
-
     volumeInfo?: {
-
       title?: string
-
       authors?: string[]
-
       description?: string
-
       imageLinks?: { thumbnail?: string; smallThumbnail?: string }
-
       publishedDate?: string
-
       pageCount?: number
-
       publisher?: string
-
       infoLink?: string
-
       categories?: string[]
-
     }
+  }
 
+  type CatalogBook = {
+    id?: string
+    Id?: string
+    externalGoogleBooksId?: string
+    ExternalGoogleBooksId?: string
+    title?: string
+    Title?: string
+    authors?: string[]
+    Authors?: string[]
+    description?: string
+    Description?: string
+    coverImageUrl?: string
+    CoverImageUrl?: string
+    publishedDate?: string
+    PublishedDate?: string
+    categories?: string[]
+    Categories?: string[]
+    dateAdded?: string
+    DateAdded?: string
+  }
+
+  type AdminUserSummary = {
+    accountId: string
+    username: string
+    email: string
+    role: 'Reader' | 'Admin'
+    registrationDate?: string | null
+    personalBookCount: number
+    readingListCount: number
+  }
+
+  type AdminUserProfile = AdminUserSummary & {
+    personalBooks: ShelvedBook[]
+    readingLists: (ReadingList & {
+      books?: { id: string; title: string }[]
+    })[]
   }
 
 
@@ -115,6 +145,8 @@
     const [isRegistering, setIsRegistering] = useState(false)
 
 
+
+    const [userRole, setUserRole] = useState<'Reader' | 'Admin'>('Reader')
 
     const [isLoggedIn, setIsLoggedIn] = useState(false)
 
@@ -184,11 +216,11 @@
     const [listsMessage, setListsMessage] = useState('')
     const [showCreateList, setShowCreateList] = useState(false)
     const [showListBookPicker, setShowListBookPicker] = useState(false)
-    const [addingBookToListId, setAddingBookToListId] = useState<string | null>(null)
     const [newListName, setNewListName] = useState('')
     const [newListDescription, setNewListDescription] = useState('')
     const [selectedList, setSelectedList] = useState<ReadingListDetail | null>(null)
     const [listActionLoading, setListActionLoading] = useState(false)
+    const [bookToAdd, setBookToAdd] = useState('')
 
     const [bookFilter, setBookFilter] = useState('All')
     const [bookSearch, setBookSearch] = useState('')
@@ -203,6 +235,13 @@
 
     const [booksMessage, setBooksMessage] = useState('')
 
+    const [addingCatalogBookId, setAddingCatalogBookId] = useState<
+      string | null
+    >(null)
+    const [catalogBookAddMessages, setCatalogBookAddMessages] = useState<
+      Record<string, { message: string; failed: boolean }>
+    >({})
+
     const [searchQuery, setSearchQuery] = useState('')
 
     const [searchResults, setSearchResults] = useState<GoogleBookResult[]>([])
@@ -214,6 +253,52 @@
     const [addingBookId, setAddingBookId] = useState<string | null>(null)
 
     const [addedBookIds, setAddedBookIds] = useState<string[]>([])
+
+    const [catalogGoogleBookIds, setCatalogGoogleBookIds] = useState<Set<string>>(
+      () => new Set(),
+    )
+    const [catalogBooks, setCatalogBooks] = useState<CatalogBook[]>([])
+    const [catalogSearch, setCatalogSearch] = useState('')
+    const [catalogLoading, setCatalogLoading] = useState(false)
+    const [catalogMessage, setCatalogMessage] = useState('')
+    const [catalogRefreshKey, setCatalogRefreshKey] = useState(0)
+    const [adminSection, setAdminSection] = useState<
+      'dashboard' | 'catalog' | 'users'
+    >('dashboard')
+    const [adminUsers, setAdminUsers] = useState<AdminUserSummary[]>([])
+    const [adminUsersLoading, setAdminUsersLoading] = useState(false)
+    const [adminUsersLoadFailed, setAdminUsersLoadFailed] = useState(false)
+    const [adminUsersMessage, setAdminUsersMessage] = useState('')
+    const [adminUsersFailed, setAdminUsersFailed] = useState(false)
+    const [adminUserSearch, setAdminUserSearch] = useState('')
+    const [adminRoleFilter, setAdminRoleFilter] = useState<
+      'All' | 'Reader' | 'Admin'
+    >('All')
+    const [selectedAdminUser, setSelectedAdminUser] =
+      useState<AdminUserProfile | null>(null)
+    const [adminUserProfileLoading, setAdminUserProfileLoading] =
+      useState(false)
+    const [adminUserActionId, setAdminUserActionId] = useState<string | null>(
+      null,
+    )
+    const [catalogActionBookId, setCatalogActionBookId] = useState<
+      string | null
+    >(null)
+    const [catalogDeleteMessage, setCatalogDeleteMessage] = useState('')
+    const [catalogDeleteFailed, setCatalogDeleteFailed] = useState(false)
+    const [editingCatalogBookId, setEditingCatalogBookId] = useState<
+      string | null
+    >(null)
+    const [catalogEditDraft, setCatalogEditDraft] = useState({
+      title: '',
+      authors: '',
+      description: '',
+      coverImageUrl: '',
+      publishedDate: '',
+      categories: '',
+    })
+    const [catalogEditMessage, setCatalogEditMessage] = useState('')
+    const [catalogEditFailed, setCatalogEditFailed] = useState(false)
 
 
 
@@ -523,6 +608,105 @@
 
     }
 
+    const addCatalogBookToMyBooks = async (
+      catalogBookId: string,
+      catalogTitle: string,
+    ) => {
+      if (!authToken || userRole !== 'Reader') {
+        setCatalogBookAddMessages((current) => ({
+          ...current,
+          [catalogBookId]: {
+            message: 'Please log in as a Reader to add this book.',
+            failed: true,
+          },
+        }))
+        return
+      }
+
+      setAddingCatalogBookId(catalogBookId)
+      setCatalogBookAddMessages((current) => {
+        const updated = { ...current }
+        delete updated[catalogBookId]
+        return updated
+      })
+
+      try {
+        const response = await fetch(
+          `/Books/from-catalog/${encodeURIComponent(catalogBookId)}`,
+          {
+            method: 'POST',
+            headers: { Authorization: 'Bearer ' + authToken },
+          },
+        )
+        const responseText = await response.text()
+        if (!response.ok) {
+          let message = responseText
+          try {
+            const parsed = JSON.parse(responseText)
+            message =
+              typeof parsed === 'string'
+                ? parsed
+                : parsed.message ?? parsed.title ?? responseText
+          } catch {
+            if (!message) {
+              message = `Could not add this book (${response.status}).`
+            }
+          }
+          throw new Error(
+            message || `Could not add this book (${response.status}).`,
+          )
+        }
+
+        let addedBook: ShelvedBook & { alreadyInLibrary?: boolean }
+        try {
+          addedBook = JSON.parse(responseText) as ShelvedBook & {
+            alreadyInLibrary?: boolean
+          }
+        } catch {
+          throw new Error(
+            'The server returned an unexpected response while adding this book.',
+          )
+        }
+
+        const addedId = addedBook.id ?? addedBook.Id
+        setBooks((current) => {
+          if (
+            current.some(
+              (personalBook) =>
+                (personalBook.catalogBookId ??
+                  personalBook.CatalogBookId) === catalogBookId ||
+                (addedId && (personalBook.id ?? personalBook.Id) === addedId),
+            )
+          ) {
+            return current
+          }
+          return [addedBook, ...current]
+        })
+        setCatalogBookAddMessages((current) => ({
+          ...current,
+          [catalogBookId]: {
+            message: addedBook.alreadyInLibrary
+              ? 'Already in My Books.'
+              : `“${catalogTitle}” was added to My Books.`,
+            failed: false,
+          },
+        }))
+      } catch (error) {
+        setCatalogBookAddMessages((current) => ({
+          ...current,
+          [catalogBookId]: {
+            message:
+              error instanceof Error
+                ? error.message
+                : 'Could not add this book. Please try again.',
+            failed: true,
+          },
+        }))
+      } finally {
+        setAddingCatalogBookId(null)
+      }
+    }
+
     const loadReadingLists = async () => {
       if (!authToken) {
         setListsMessage('Please log in again to view your reading lists.')
@@ -597,10 +781,10 @@
       }
     }
 
-    const openReadingList = async (list: ReadingList): Promise<boolean> => {
+    const openReadingList = async (list: ReadingList) => {
       const id = list.id ?? list.Id
 
-      if (!authToken || !id) return false
+      if (!authToken || !id) return
 
       setListActionLoading(true)
       setListsMessage('')
@@ -621,34 +805,27 @@
             (item.id ?? item.Id) === id ? detail.list : item,
           ),
         )
-        return true
       } catch (error) {
         setListsMessage(
           error instanceof Error ? error.message : 'Could not open this list.',
         )
-        return false
       } finally {
         setListActionLoading(false)
       }
     }
 
-    const addBookToReadingList = async (bookId: string) => {
-      if (!authToken || !selectedList || !bookId) return
+    const addBookToReadingList = async () => {
+      if (!authToken || !selectedList || !bookToAdd) return
 
       const listId = selectedList.list.id ?? selectedList.list.Id
       if (!listId) return
 
       setListActionLoading(true)
-      setAddingBookToListId(bookId)
       setListsMessage('')
 
       try {
-        if (selectedList.books.some((book) => (book.id ?? book.Id) === bookId)) {
-          return
-        }
-
         const response = await fetch(
-          `/ReadingLists/${encodeURIComponent(listId)}/books/${encodeURIComponent(bookId)}`,
+          `/ReadingLists/${encodeURIComponent(listId)}/books/${encodeURIComponent(bookToAdd)}`,
           {
             method: 'POST',
             headers: { Authorization: `Bearer ${authToken}` },
@@ -660,41 +837,15 @@
           throw new Error(message || 'Could not add book to list.')
         }
 
-        const updatedList = (await response.json()) as ReadingList
-        const addedBook = books.find(
-          (book) => (book.id ?? book.Id) === bookId,
-        )
-
-        setSelectedList((current) =>
-          current
-            ? {
-                list: updatedList,
-                books:
-                  addedBook &&
-                  !current.books.some(
-                    (book) => (book.id ?? book.Id) === bookId,
-                  )
-                    ? [...current.books, addedBook]
-                    : current.books,
-              }
-            : current,
-        )
-        setReadingLists((current) =>
-          current.map((list) =>
-            (list.id ?? list.Id) === listId ? updatedList : list,
-          ),
-        )
-
-        const refreshed = await openReadingList(selectedList.list)
-        if (refreshed) {
-          setListsMessage('Book added to the list.')
-        }
+        setBookToAdd('')
+        await openReadingList(selectedList.list)
+        setShowListBookPicker(false)
+        setListsMessage('Book added to the list.')
       } catch (error) {
         setListsMessage(
           error instanceof Error ? error.message : 'Could not add this book.',
         )
       } finally {
-        setAddingBookToListId(null)
         setListActionLoading(false)
       }
     }
@@ -870,30 +1021,86 @@
 
 
     useEffect(() => {
-      if (isLoggedIn && authToken) {
-        if (activePage === 'Your Books' || activePage === 'Home') {
+
+      if (isLoggedIn && authToken && userRole === 'Reader') {
+        if (
+          activePage === 'Your Books' ||
+          activePage === 'Home' ||
+          activePage === 'Discover'
+        ) {
           void loadMyBooks(authToken)
         }
 
         if (activePage === 'Lists') {
+          void loadMyBooks(authToken)
           void loadReadingLists()
         }
       }
 
-    }, [isLoggedIn, authToken, activePage])
+    }, [isLoggedIn, authToken, activePage, userRole])
 
     useEffect(() => {
-      if (!showListBookPicker) return
+      const shouldLoadCatalog =
+        isLoggedIn &&
+        authToken &&
+        (userRole === 'Admin' ||
+          (userRole === 'Reader' && activePage === 'Discover'))
+      if (!shouldLoadCatalog || !authToken) return
 
-      const handleKeyDown = (event: KeyboardEvent) => {
-        if (event.key === 'Escape' && !listActionLoading) {
-          setShowListBookPicker(false)
+      let isCurrent = true
+      setCatalogLoading(true)
+      setCatalogMessage('')
+
+      const loadCatalogBookIds = async () => {
+        try {
+          const response = await fetch('/BookCatalog', {
+            headers: { Authorization: `Bearer ${authToken}` },
+          })
+          const responseText = await response.text()
+
+          if (!response.ok) {
+            let message = responseText
+            try {
+              const parsed = JSON.parse(responseText)
+              message =
+                typeof parsed === 'string'
+                  ? parsed
+                  : parsed.message ?? parsed.title ?? responseText
+            } catch {
+              // Use the response text when the server doesn't return JSON.
+            }
+            throw new Error(
+              message || `Could not check the catalog (${response.status}).`,
+            )
+          }
+
+          const catalog = JSON.parse(responseText) as CatalogBook[]
+          const bookIds = catalog
+            .map((book) => book.externalGoogleBooksId ?? book.ExternalGoogleBooksId)
+            .filter((id): id is string => Boolean(id))
+
+          if (isCurrent) {
+            setCatalogBooks(catalog)
+            setCatalogGoogleBookIds(new Set(bookIds))
+          }
+        } catch (error) {
+          if (isCurrent) {
+            setCatalogMessage(
+              error instanceof Error
+                ? error.message
+                : 'Could not check the shared catalog.',
+            )
+          }
+        } finally {
+          if (isCurrent) setCatalogLoading(false)
         }
       }
 
-      window.addEventListener('keydown', handleKeyDown)
-      return () => window.removeEventListener('keydown', handleKeyDown)
-    }, [listActionLoading, showListBookPicker])
+      void loadCatalogBookIds()
+      return () => {
+        isCurrent = false
+      }
+    }, [isLoggedIn, authToken, userRole, activePage, catalogRefreshKey])
 
     const searchBooks = async (event: FormEvent<HTMLFormElement>) => {
 
@@ -901,7 +1108,7 @@
 
       const query = searchQuery.trim()
 
-      if (!query || !authToken) return
+      if (!query || !authToken || userRole !== 'Admin') return
 
 
 
@@ -965,7 +1172,7 @@
 
 
 
-    const addBookToLibrary = async (result: GoogleBookResult) => {
+    const addBookToCatalog = async (result: GoogleBookResult) => {
 
       if (!authToken || !result.volumeInfo?.title) return
 
@@ -979,29 +1186,14 @@
 
         const title = result.volumeInfo.title
 
-        const author = result.volumeInfo.authors?.join(', ') ?? 'Unknown author'
-
-        const alreadySaved = books.some((book) =>
-
-          (book.title ?? book.Title ?? '').trim().toLowerCase() === title.trim().toLowerCase() &&
-
-          (book.author ?? book.Author ?? '').trim().toLowerCase() === author.trim().toLowerCase()
-
-        )
-
-        if (alreadySaved) {
-
-          setAddedBookIds((current) => current.includes(result.id) ? current : [...current, result.id])
-
-          setSearchMessage('That book is already in Your Books.')
-
+        if (catalogGoogleBookIds.has(result.id)) {
+          setSearchMessage('This book is already in the shared catalog.')
           return
-
         }
 
 
 
-        const response = await fetch('/Books', {
+        const response = await fetch('/BookCatalog', {
 
           method: 'POST',
 
@@ -1013,24 +1205,45 @@
 
           },
 
-        body: JSON.stringify({
-          title,
-          author,
-          coverUrl: (
-            result.volumeInfo?.imageLinks?.thumbnail ??
-            result.volumeInfo?.imageLinks?.smallThumbnail ??
-            ''
-          ).replace('http://', 'https://'),
-          description: result.volumeInfo?.description ?? '',
-          pageCount: result.volumeInfo?.pageCount ?? 0,
-          currentPage: 0,
-          status: 'To read',
-          rating: 0,
-        }),
+          body: JSON.stringify({
+            externalGoogleBooksId: result.id,
+            title,
+            authors: result.volumeInfo.authors ?? [],
+            description: result.volumeInfo.description ?? '',
+            coverImageUrl: (
+              result.volumeInfo.imageLinks?.thumbnail ??
+              result.volumeInfo.imageLinks?.smallThumbnail ??
+              ''
+            ).replace(/^http:/, 'https:'),
+            publishedDate: result.volumeInfo.publishedDate ?? null,
+            categories: result.volumeInfo.categories ?? [],
+          }),
 
         })
 
         const responseText = await response.text()
+
+        if (response.status === 409) {
+          let message = responseText
+          try {
+            const parsed = JSON.parse(responseText)
+            message =
+              typeof parsed === 'string'
+                ? parsed
+                : parsed.message ?? parsed.title ?? responseText
+          } catch {
+            // Use the response text when the server doesn't return JSON.
+          }
+
+          setCatalogGoogleBookIds((current) => new Set(current).add(result.id))
+          setAddedBookIds((current) =>
+            current.includes(result.id) ? current : [...current, result.id],
+          )
+          setSearchMessage(
+            message || 'This book is already in the shared catalog.',
+          )
+          return
+        }
 
         if (!response.ok) {
 
@@ -1048,19 +1261,38 @@
 
           }
 
-          throw new Error(message || `Could not add book (${response.status}).`)
+          throw new Error(
+            message ||
+              `Could not add book to catalog (${response.status}).`,
+          )
 
         }
 
 
 
-        setAddedBookIds((current) => current.includes(result.id) ? current : [...current, result.id])
-
-        await loadMyBooks(authToken)
+        setCatalogGoogleBookIds((current) => new Set(current).add(result.id))
+        setAddedBookIds((current) =>
+          current.includes(result.id) ? current : [...current, result.id],
+        )
+        const catalogBook = JSON.parse(responseText) as CatalogBook
+        setCatalogBooks((current) =>
+          current.some(
+            (book) =>
+              (book.externalGoogleBooksId ??
+                book.ExternalGoogleBooksId) === result.id,
+          )
+            ? current
+            : [...current, catalogBook],
+        )
+        setSearchMessage(`“${title}” was added to the shared catalog.`)
 
       } catch (error) {
 
-        setSearchMessage(error instanceof Error ? error.message : 'Could not add this book. Please try again.')
+        setSearchMessage(
+          error instanceof Error
+            ? error.message
+            : 'Could not add this book to the shared catalog.',
+        )
 
       } finally {
 
@@ -1196,30 +1428,16 @@
 
 
 
-        const loginData = JSON.parse(responseText) as {
-
-
-
-          token: string
-
-
-
-          user: {
-
-
-
-            username: string
-
-            email: string
-
-            readingGoal?: number
-            ReadingGoal?: number
-
-          }
-
-
-
-        }
+            const loginData = JSON.parse(responseText) as {
+              token: string
+              user: {
+                username: string
+                email: string
+                role: string
+                readingGoal?: number
+                ReadingGoal?: number
+              }
+            }
 
 
 
@@ -1231,6 +1449,7 @@
 
 
           setProfileUsername(loginData.user.username)
+          setUserRole(loginData.user.role === 'Admin' ? 'Admin' : 'Reader')
 
           setProfileEmail(loginData.user.email)
           setReadingGoal(loginData.user.readingGoal ?? loginData.user.ReadingGoal ?? 12)
@@ -1240,6 +1459,7 @@
           setLoginPassword('')
 
           setLoginMessage('')
+
 
 
 
@@ -1376,11 +1596,15 @@
         // Clear the local session after successful deletion.
         setAuthToken(null);
         setIsLoggedIn(false);
+        setUserRole('Reader');
         setProfileUsername('');
         setProfileEmail('');
         setBooks([]);
         setSearchResults([]);
         setAddedBookIds([]);
+        setCatalogGoogleBookIds(new Set());
+        setCatalogBooks([]);
+        setCatalogMessage('');
         setActivePage('Home');
         setLoginMessage('Your account and saved books have been deleted.');
       } catch (error) {
@@ -1391,6 +1615,1233 @@
         );
       }
     };
+
+    const handleLogout = () => {
+      setIsLoggedIn(false)
+      setAuthToken(null)
+      setUserRole('Reader')
+      setProfileUsername('')
+      setProfileEmail('')
+      setBooks([])
+      setBooksMessage('')
+      setAddingCatalogBookId(null)
+      setCatalogBookAddMessages({})
+      setSearchResults([])
+      setSearchQuery('')
+      setAddedBookIds([])
+      setSearchMessage('')
+      setCatalogGoogleBookIds(new Set())
+      setCatalogBooks([])
+      setCatalogMessage('')
+      setCatalogDeleteMessage('')
+      setCatalogDeleteFailed(false)
+      setCatalogEditMessage('')
+      setCatalogEditFailed(false)
+      setEditingCatalogBookId(null)
+      setAdminUsers([])
+      setAdminUsersLoadFailed(false)
+      setAdminUsersMessage('')
+      setAdminUsersFailed(false)
+      setAdminUserSearch('')
+      setAdminRoleFilter('All')
+      setSelectedAdminUser(null)
+      setAdminUserProfileLoading(false)
+      setAdminUserActionId(null)
+      setAdminSection('dashboard')
+      setIsRegistering(false)
+      setLoginEmail('')
+      setLoginPassword('')
+      setLoginMessage('')
+      setActivePage('Home')
+    }
+
+    const deleteCatalogBook = async (book: CatalogBook) => {
+      const id = book.id ?? book.Id
+      if (!authToken || !id || userRole !== 'Admin') return
+
+      const title = book.title ?? book.Title ?? 'this book'
+      if (
+        !window.confirm(
+          `Remove “${title}” from the shared book catalog? This will not affect anyone's personal library.`,
+        )
+      ) {
+        return
+      }
+
+      setCatalogActionBookId(id)
+      setCatalogDeleteMessage('')
+      setCatalogDeleteFailed(false)
+
+      try {
+        const response = await fetch(
+          `/BookCatalog/${encodeURIComponent(id)}`,
+          {
+            method: 'DELETE',
+            headers: { Authorization: `Bearer ${authToken}` },
+          },
+        )
+        if (!response.ok) {
+          const responseText = await response.text()
+          let message = responseText
+          try {
+            const parsed = JSON.parse(responseText)
+            message =
+              typeof parsed === 'string'
+                ? parsed
+                : parsed.message ?? parsed.title ?? responseText
+          } catch {
+            // Use the response text when the server doesn't return JSON.
+          }
+          throw new Error(
+            message || `Could not remove book (${response.status}).`,
+          )
+        }
+
+        const externalId =
+          book.externalGoogleBooksId ?? book.ExternalGoogleBooksId
+        setCatalogBooks((current) =>
+          current.filter((item) => (item.id ?? item.Id) !== id),
+        )
+        if (externalId) {
+          setCatalogGoogleBookIds((current) => {
+            const updated = new Set(current)
+            updated.delete(externalId)
+            return updated
+          })
+          setAddedBookIds((current) =>
+            current.filter((addedId) => addedId !== externalId),
+          )
+        }
+        setCatalogDeleteMessage(`“${title}” was removed from the catalog.`)
+      } catch (error) {
+        setCatalogDeleteFailed(true)
+        setCatalogDeleteMessage(
+          error instanceof Error
+            ? error.message
+            : 'Could not remove this book from the catalog.',
+        )
+      } finally {
+        setCatalogActionBookId(null)
+      }
+    }
+
+    const startCatalogBookEdit = (book: CatalogBook) => {
+      setEditingCatalogBookId(book.id ?? book.Id ?? null)
+      setCatalogEditDraft({
+        title: book.title ?? book.Title ?? '',
+        authors: (book.authors ?? book.Authors ?? []).join(', '),
+        description: book.description ?? book.Description ?? '',
+        coverImageUrl: book.coverImageUrl ?? book.CoverImageUrl ?? '',
+        publishedDate: book.publishedDate ?? book.PublishedDate ?? '',
+        categories: (book.categories ?? book.Categories ?? []).join(', '),
+      })
+      setCatalogEditMessage('')
+      setCatalogEditFailed(false)
+    }
+
+    const updateCatalogBook = async (
+      event: FormEvent<HTMLFormElement>,
+      book: CatalogBook,
+    ) => {
+      event.preventDefault()
+      const id = book.id ?? book.Id
+      if (!authToken || !id || userRole !== 'Admin') return
+
+      if (!catalogEditDraft.title.trim()) {
+        setCatalogEditFailed(true)
+        setCatalogEditMessage('Book title is required.')
+        return
+      }
+
+      setCatalogActionBookId(id)
+      setCatalogEditMessage('')
+      setCatalogEditFailed(false)
+
+      try {
+        const response = await fetch(
+          `/BookCatalog/${encodeURIComponent(id)}`,
+          {
+            method: 'PUT',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${authToken}`,
+            },
+            body: JSON.stringify({
+              externalGoogleBooksId:
+                book.externalGoogleBooksId ??
+                book.ExternalGoogleBooksId ??
+                null,
+              title: catalogEditDraft.title,
+              authors: catalogEditDraft.authors
+                .split(',')
+                .map((author) => author.trim())
+                .filter(Boolean),
+              description: catalogEditDraft.description,
+              coverImageUrl: catalogEditDraft.coverImageUrl,
+              publishedDate: catalogEditDraft.publishedDate || null,
+              categories: catalogEditDraft.categories
+                .split(',')
+                .map((category) => category.trim())
+                .filter(Boolean),
+            }),
+          },
+        )
+
+        const responseText = await response.text()
+        if (!response.ok) {
+          let message = responseText
+          try {
+            const parsed = JSON.parse(responseText)
+            message =
+              typeof parsed === 'string'
+                ? parsed
+                : parsed.message ?? parsed.title ?? responseText
+          } catch {
+            // Use the response text when the server doesn't return JSON.
+          }
+          throw new Error(
+            message || `Could not update book (${response.status}).`,
+          )
+        }
+
+        const updatedBook = JSON.parse(responseText) as CatalogBook
+        setCatalogBooks((current) =>
+          current.map((item) =>
+            (item.id ?? item.Id) === id ? updatedBook : item,
+          ),
+        )
+        setEditingCatalogBookId(null)
+        setCatalogEditMessage('Catalog entry updated.')
+      } catch (error) {
+        setCatalogEditFailed(true)
+        setCatalogEditMessage(
+          error instanceof Error
+            ? error.message
+            : 'Could not update this catalog entry.',
+        )
+      } finally {
+        setCatalogActionBookId(null)
+      }
+    }
+
+    const getAdminApiError = async (
+      response: Response,
+      fallback: string,
+    ) => {
+      const text = await response.text()
+      if (!text) return fallback
+      try {
+        const parsed = JSON.parse(text)
+        return typeof parsed === 'string'
+          ? parsed
+          : parsed.message ?? parsed.title ?? fallback
+      } catch {
+        return `The server returned a non-JSON response (${response.status}). Check the API route and Vite proxy configuration.`
+      }
+    }
+
+    const getAdminApiJson = async <T,>(
+      response: Response,
+      fallback: string,
+    ): Promise<T> => {
+      const text = await response.text()
+      if (!response.ok) {
+        let message = fallback
+        try {
+          const parsed = JSON.parse(text)
+          message =
+            typeof parsed === 'string'
+              ? parsed
+              : parsed.message ?? parsed.title ?? fallback
+        } catch {
+          message = `The server returned a non-JSON response (${response.status}). Check the API route and Vite proxy configuration.`
+        }
+        throw new Error(message)
+      }
+
+      try {
+        return JSON.parse(text) as T
+      } catch {
+        throw new Error(
+          `The server returned an unexpected non-JSON response (${response.status}). Check the API route and Vite proxy configuration.`,
+        )
+      }
+    }
+
+    const loadAdminUsers = async () => {
+      if (!authToken || userRole !== 'Admin') return
+
+      setAdminUsersLoading(true)
+      setAdminUsersLoadFailed(false)
+      setAdminUsersMessage('')
+      setAdminUsersFailed(false)
+      setSelectedAdminUser(null)
+      try {
+        const response = await fetch('/AdminUsers', {
+          headers: { Authorization: 'Bearer ' + authToken },
+        })
+        setAdminUsers(
+          await getAdminApiJson<AdminUserSummary[]>(
+            response,
+            'Could not load users.',
+          ),
+        )
+      } catch (error) {
+        setAdminUsersLoadFailed(true)
+        setAdminUsersFailed(true)
+        setAdminUsersMessage(
+          error instanceof Error ? error.message : 'Could not load users.',
+        )
+      } finally {
+        setAdminUsersLoading(false)
+      }
+    }
+
+    const openAdminUser = async (user: AdminUserSummary) => {
+      if (!authToken || userRole !== 'Admin') return
+
+      setAdminUserProfileLoading(true)
+      setSelectedAdminUser(null)
+      setAdminUsersMessage('')
+      setAdminUsersFailed(false)
+      try {
+        const response = await fetch(
+          `/AdminUsers/${encodeURIComponent(user.accountId)}`,
+          { headers: { Authorization: 'Bearer ' + authToken } },
+        )
+        const profile = await getAdminApiJson<Partial<AdminUserProfile>>(
+          response,
+          'Could not load this profile.',
+        )
+        setSelectedAdminUser({ ...user, ...profile } as AdminUserProfile)
+      } catch (error) {
+        setAdminUsersFailed(true)
+        setAdminUsersMessage(
+          error instanceof Error
+            ? error.message
+            : 'Could not load this profile.',
+        )
+      } finally {
+        setAdminUserProfileLoading(false)
+      }
+    }
+
+    const updateAdminUserRole = async (user: AdminUserSummary) => {
+      if (!authToken || userRole !== 'Admin') return
+      const nextRole = user.role === 'Admin' ? 'Reader' : 'Admin'
+      if (
+        !window.confirm(
+          `Change ${user.username} (${user.email}) from ${user.role} to ${nextRole}?`,
+        )
+      ) {
+        return
+      }
+
+      setAdminUserActionId(user.accountId)
+      setAdminUsersMessage('')
+      setAdminUsersFailed(false)
+      try {
+        const response = await fetch(
+          `/AdminUsers/${encodeURIComponent(user.accountId)}/role`,
+          {
+            method: 'PUT',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: 'Bearer ' + authToken,
+            },
+            body: JSON.stringify({ role: nextRole }),
+          },
+        )
+        if (!response.ok) {
+          throw new Error(
+            await getAdminApiError(response, 'Could not change this role.'),
+          )
+        }
+
+        setAdminUsers((current) =>
+          current.map((item) =>
+            item.accountId === user.accountId
+              ? { ...item, role: nextRole }
+              : item,
+          ),
+        )
+        setSelectedAdminUser((current) =>
+          current?.accountId === user.accountId
+            ? { ...current, role: nextRole }
+            : current,
+        )
+        setAdminUsersMessage(
+          `${user.username} is now ${nextRole}.`,
+        )
+      } catch (error) {
+        setAdminUsersFailed(true)
+        setAdminUsersMessage(
+          error instanceof Error
+            ? error.message
+            : 'Could not change this role.',
+        )
+      } finally {
+        setAdminUserActionId(null)
+      }
+    }
+
+    const deleteAdminUser = async (user: AdminUserSummary) => {
+      if (!authToken || userRole !== 'Admin') return
+      if (
+        !window.confirm(
+          `Permanently delete ${user.username} (${user.email})? This removes the account, its personal books, and its reading lists. Shared catalog books and other users' data will not be deleted. This cannot be undone.`,
+        )
+      ) {
+        return
+      }
+
+      setAdminUserActionId(user.accountId)
+      setAdminUsersMessage('')
+      setAdminUsersFailed(false)
+      try {
+        const response = await fetch(
+          `/AdminUsers/${encodeURIComponent(user.accountId)}`,
+          {
+            method: 'DELETE',
+            headers: { Authorization: 'Bearer ' + authToken },
+          },
+        )
+        if (!response.ok) {
+          throw new Error(
+            await getAdminApiError(response, 'Could not delete this account.'),
+          )
+        }
+
+        setAdminUsers((current) =>
+          current.filter((item) => item.accountId !== user.accountId),
+        )
+        setSelectedAdminUser(null)
+        setAdminUsersMessage(
+          `${user.username}'s account, personal books, and reading lists were deleted. Shared catalog books were not affected.`,
+        )
+      } catch (error) {
+        setAdminUsersFailed(true)
+        setAdminUsersMessage(
+          error instanceof Error
+            ? error.message
+            : 'Could not delete this account.',
+        )
+      } finally {
+        setAdminUserActionId(null)
+      }
+    }
+
+    const visibleAdminUsers = adminUsers.filter((user) => {
+      const search = adminUserSearch.trim().toLocaleLowerCase()
+      const matchesSearch =
+        !search ||
+        user.username.toLocaleLowerCase().includes(search) ||
+        user.email.toLocaleLowerCase().includes(search)
+      return (
+        matchesSearch &&
+        (adminRoleFilter === 'All' || user.role === adminRoleFilter)
+      )
+    })
+
+    if (isLoggedIn && userRole === 'Admin') {
+      return (
+        <main className="admin-dashboard">
+          <header className="admin-dashboard-header">
+            <div className="admin-dashboard-brand">Shelved</div>
+            <div className="admin-dashboard-header-actions">
+              {adminSection !== 'dashboard' && (
+                <button
+                  type="button"
+                  className="admin-dashboard-back"
+                  onClick={() => {
+                    setCatalogDeleteMessage('')
+                    setCatalogDeleteFailed(false)
+                    setAdminSection('dashboard')
+                    setSelectedAdminUser(null)
+                    setAdminUsersMessage('')
+                  }}
+                >
+                  Back to dashboard
+                </button>
+              )}
+              <button
+                type="button"
+                className="admin-dashboard-logout"
+                onClick={handleLogout}
+              >
+                Log out
+              </button>
+            </div>
+          </header>
+
+          <section className="admin-dashboard-content">
+            {adminSection === 'catalog' ? (
+              <>
+                <p className="admin-dashboard-eyebrow">SHARED LIBRARY</p>
+                <h1>Book Catalog</h1>
+                <p className="admin-dashboard-welcome">
+                  View and manage books available in Shelved’s shared catalog.
+                </p>
+
+                {catalogDeleteMessage && (
+                  <p
+                    className={
+                      catalogDeleteFailed
+                        ? 'admin-catalog-error'
+                        : 'admin-catalog-success'
+                    }
+                    role={catalogDeleteFailed ? 'alert' : 'status'}
+                  >
+                    {catalogDeleteMessage}
+                  </p>
+                )}
+                {catalogEditMessage && (
+                  <p
+                    className={
+                      catalogEditFailed
+                        ? 'admin-catalog-error'
+                        : 'admin-catalog-success'
+                    }
+                    role={catalogEditFailed ? 'alert' : 'status'}
+                  >
+                    {catalogEditMessage}
+                  </p>
+                )}
+
+                {catalogLoading ? (
+                  <p className="admin-catalog-state" role="status">
+                    Loading the shared catalog...
+                  </p>
+                ) : catalogMessage ? (
+                  <div className="admin-catalog-state admin-catalog-error">
+                    <p>{catalogMessage}</p>
+                    <button
+                      type="button"
+                      className="admin-catalog-retry"
+                      onClick={() => {
+                        setCatalogMessage('')
+                        setCatalogDeleteFailed(false)
+                        setCatalogRefreshKey((current) => current + 1)
+                      }}
+                    >
+                      Try again
+                    </button>
+                  </div>
+                ) : catalogBooks.length === 0 ? (
+                  <div className="admin-catalog-state">
+                    <h2>The shared catalog is empty.</h2>
+                    <p>
+                      Use Google Books Search on the dashboard to add the first
+                      catalog entries.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="admin-catalog-grid">
+                    {catalogBooks.map((book, index) => {
+                      const id =
+                        book.id ?? book.Id ?? `${book.title}-${index}`
+                      const title = book.title ?? book.Title ?? 'Untitled'
+                      const authors = book.authors ?? book.Authors ?? []
+                      const cover =
+                        book.coverImageUrl ?? book.CoverImageUrl ?? ''
+                      const publishedDate =
+                        book.publishedDate ?? book.PublishedDate ?? ''
+                      const publishedYear =
+                        publishedDate.match(/^\d{4}/)?.[0]
+                      const busy = catalogActionBookId === id
+
+                      return (
+                        <article className="admin-catalog-book" key={id}>
+                          {cover ? (
+                            <img
+                              className="admin-catalog-book-cover"
+                              src={cover.replace(/^http:/, 'https:')}
+                              alt={`Cover of ${title}`}
+                              loading="lazy"
+                            />
+                          ) : (
+                            <div
+                              className="admin-catalog-book-cover-placeholder"
+                              aria-label="No cover available"
+                            >
+                              {'\u25A4'}
+                            </div>
+                          )}
+                          {editingCatalogBookId === (book.id ?? book.Id) ? (
+                            <form
+                              className="admin-catalog-edit-form"
+                              onSubmit={(event) =>
+                                void updateCatalogBook(event, book)
+                              }
+                            >
+                              <label>
+                                Title
+                                <input
+                                  value={catalogEditDraft.title}
+                                  onChange={(event) =>
+                                    setCatalogEditDraft((current) => ({
+                                      ...current,
+                                      title: event.target.value,
+                                    }))
+                                  }
+                                  required
+                                />
+                              </label>
+                              <label>
+                                Authors (comma-separated)
+                                <input
+                                  value={catalogEditDraft.authors}
+                                  onChange={(event) =>
+                                    setCatalogEditDraft((current) => ({
+                                      ...current,
+                                      authors: event.target.value,
+                                    }))
+                                  }
+                                />
+                              </label>
+                              <label>
+                                Cover image URL
+                                <input
+                                  type="url"
+                                  value={catalogEditDraft.coverImageUrl}
+                                  onChange={(event) =>
+                                    setCatalogEditDraft((current) => ({
+                                      ...current,
+                                      coverImageUrl: event.target.value,
+                                    }))
+                                  }
+                                />
+                              </label>
+                              <label>
+                                Published date
+                                <input
+                                  value={catalogEditDraft.publishedDate}
+                                  onChange={(event) =>
+                                    setCatalogEditDraft((current) => ({
+                                      ...current,
+                                      publishedDate: event.target.value,
+                                    }))
+                                  }
+                                  placeholder="e.g. 2024"
+                                />
+                              </label>
+                              <label>
+                                Categories (comma-separated)
+                                <input
+                                  value={catalogEditDraft.categories}
+                                  onChange={(event) =>
+                                    setCatalogEditDraft((current) => ({
+                                      ...current,
+                                      categories: event.target.value,
+                                    }))
+                                  }
+                                />
+                              </label>
+                              <label>
+                                Description
+                                <textarea
+                                  value={catalogEditDraft.description}
+                                  onChange={(event) =>
+                                    setCatalogEditDraft((current) => ({
+                                      ...current,
+                                      description: event.target.value,
+                                    }))
+                                  }
+                                  rows={4}
+                                />
+                              </label>
+                              <div className="admin-catalog-edit-actions">
+                                <button
+                                  type="submit"
+                                  className="admin-catalog-edit-save"
+                                  disabled={busy}
+                                >
+                                  {busy ? 'Saving...' : 'Save changes'}
+                                </button>
+                                <button
+                                  type="button"
+                                  className="admin-catalog-edit-cancel"
+                                  onClick={() => {
+                                    setEditingCatalogBookId(null)
+                                    setCatalogEditMessage('')
+                                    setCatalogEditFailed(false)
+                                  }}
+                                  disabled={busy}
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            </form>
+                          ) : (
+                            <>
+                              <div className="admin-catalog-book-details">
+                                <h2>{title}</h2>
+                                <p>
+                                  {authors.length
+                                    ? authors.join(', ')
+                                    : 'Unknown author'}
+                                </p>
+                                {publishedYear && (
+                                  <span>Published {publishedYear}</span>
+                                )}
+                              </div>
+                              <div className="admin-catalog-book-actions">
+                                <button
+                                  type="button"
+                                  className="admin-catalog-edit-button"
+                                  onClick={() => startCatalogBookEdit(book)}
+                                  disabled={busy}
+                                >
+                                  Edit
+                                </button>
+                                <button
+                                  type="button"
+                                  className="admin-catalog-delete"
+                                  onClick={() => void deleteCatalogBook(book)}
+                                  disabled={busy}
+                                >
+                                  {busy ? 'Removing...' : 'Remove from catalog'}
+                                </button>
+                              </div>
+                            </>
+                          )}
+                        </article>
+                      )
+                    })}
+                  </div>
+                )}
+              </>
+            ) : adminSection === 'users' ? (
+                            <>
+                              <p className="admin-dashboard-eyebrow">SHELVED ACCOUNTS</p>
+                              <h1>
+                                {selectedAdminUser ? 'User Profile' : 'User Management'}
+                              </h1>
+                              <p className="admin-dashboard-welcome">
+                                {selectedAdminUser
+                                  ? `Account details and private library for ${selectedAdminUser.username}.`
+                                  : 'Review accounts, roles, and personal library activity.'}
+                              </p>
+
+                              {adminUsersMessage && (
+                                <p
+                                  className={
+                                    adminUsersFailed
+                                      ? 'admin-user-message admin-user-message-error'
+                                      : 'admin-user-message'
+                                  }
+                                  role={adminUsersFailed ? 'alert' : 'status'}
+                                >
+                                  {adminUsersMessage}
+                                </p>
+                              )}
+
+                              {adminUserProfileLoading ? (
+                                <div className="admin-user-state" role="status">
+                                  Loading user profile...
+                                </div>
+                              ) : selectedAdminUser ? (
+                                <section className="admin-user-profile">
+                                  <button
+                                    type="button"
+                                    className="admin-dashboard-back admin-user-return"
+                                    onClick={() => {
+                                      setSelectedAdminUser(null)
+                                      setAdminUsersMessage('')
+                                      setAdminUsersFailed(false)
+                                    }}
+                                  >
+                                    Back to users
+                                  </button>
+                                  <div className="admin-user-profile-heading">
+                                    <div>
+                                      <h2>{selectedAdminUser.username}</h2>
+                                      <p>{selectedAdminUser.email}</p>
+                                    </div>
+                                    <span className={`admin-user-role admin-user-role-${selectedAdminUser.role.toLowerCase()}`}>
+                                      {selectedAdminUser.role}
+                                    </span>
+                                  </div>
+                                  <dl className="admin-user-account-meta">
+                                    <div>
+                                      <dt>Account ID</dt>
+                                      <dd>{selectedAdminUser.accountId}</dd>
+                                    </div>
+                                    {selectedAdminUser.registrationDate && (
+                                      <div>
+                                        <dt>Registered</dt>
+                                        <dd>
+                                          {new Date(
+                                            selectedAdminUser.registrationDate,
+                                          ).toLocaleDateString()}
+                                        </dd>
+                                      </div>
+                                    )}
+                                    <div>
+                                      <dt>Personal books</dt>
+                                      <dd>{selectedAdminUser.personalBookCount}</dd>
+                                    </div>
+                                    <div>
+                                      <dt>Reading lists</dt>
+                                      <dd>{selectedAdminUser.readingListCount}</dd>
+                                    </div>
+                                  </dl>
+                                  <div className="admin-user-actions">
+                                    <button
+                                      type="button"
+                                      className="admin-user-role-button"
+                                      onClick={() =>
+                                        void updateAdminUserRole(selectedAdminUser)
+                                      }
+                                      disabled={
+                                        adminUserActionId === selectedAdminUser.accountId
+                                      }
+                                    >
+                                      Change to{' '}
+                                      {selectedAdminUser.role === 'Admin'
+                                        ? 'Reader'
+                                        : 'Admin'}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="admin-user-delete-button"
+                                      onClick={() => void deleteAdminUser(selectedAdminUser)}
+                                      disabled={
+                                        adminUserActionId === selectedAdminUser.accountId ||
+                                        selectedAdminUser.email.toLowerCase() ===
+                                          profileEmail.toLowerCase()
+                                      }
+                                      title={
+                                        selectedAdminUser.email.toLowerCase() ===
+                                        profileEmail.toLowerCase()
+                                          ? 'You cannot delete your own account here.'
+                                          : undefined
+                                      }
+                                    >
+                                      Delete account
+                                    </button>
+                                  </div>
+
+                                  <section className="admin-user-data-section">
+                                    <div className="admin-user-section-heading">
+                                      <h2>Personal Books</h2>
+                                      <span>{selectedAdminUser.personalBooks.length}</span>
+                                    </div>
+                                    {selectedAdminUser.personalBooks.length === 0 ? (
+                                      <p className="admin-user-state">
+                                        This account has no personal books.
+                                      </p>
+                                    ) : (
+                                      <div className="admin-user-book-list">
+                                        {selectedAdminUser.personalBooks.map((book) => {
+                                          const id = book.id ?? book.Id ?? book.title ?? ''
+                                          const title = book.title ?? book.Title ?? 'Untitled'
+                                          const author =
+                                            book.author ?? book.Author ?? 'Unknown author'
+                                          const status = book.status ?? book.Status ?? 'To read'
+                                          const currentPage =
+                                            book.currentPage ?? book.CurrentPage ?? 0
+                                          const pageCount =
+                                            book.pageCount ?? book.PageCount ?? 0
+                                          const cover = book.coverUrl ?? book.CoverUrl
+
+                                          return (
+                                            <article className="admin-user-book" key={id}>
+                                              {cover ? (
+                                                <img src={cover} alt="" loading="lazy" />
+                                              ) : (
+                                                <div className="admin-user-book-cover">
+                                                  No cover
+                                                </div>
+                                              )}
+                                              <div>
+                                                <h3>{title}</h3>
+                                                <p>{author}</p>
+                                                <span>{status}</span>
+                                                {pageCount > 0 && (
+                                                  <span>
+                                                    {currentPage} of {pageCount} pages
+                                                  </span>
+                                                )}
+                                              </div>
+                                            </article>
+                                          )
+                                        })}
+                                      </div>
+                                    )}
+                                  </section>
+
+                                  <section className="admin-user-data-section">
+                                    <div className="admin-user-section-heading">
+                                      <h2>Reading Lists</h2>
+                                      <span>{selectedAdminUser.readingLists.length}</span>
+                                    </div>
+                                    {selectedAdminUser.readingLists.length === 0 ? (
+                                      <p className="admin-user-state">
+                                        This account has no reading lists.
+                                      </p>
+                                    ) : (
+                                      <div className="admin-user-list-grid">
+                                        {selectedAdminUser.readingLists.map((list) => (
+                                          <article
+                                            className="admin-user-reading-list"
+                                            key={list.id ?? list.Id ?? list.name}
+                                          >
+                                            <h3>{list.name ?? list.Name ?? 'Untitled list'}</h3>
+                                            <p>
+                                              {list.description ??
+                                                list.Description ??
+                                                'No description'}
+                                            </p>
+                                            <span>
+                                              {list.books?.length ?? 0}{' '}
+                                              {(list.books?.length ?? 0) === 1
+                                                ? 'book'
+                                                : 'books'}
+                                              {list.isShared ?? list.IsShared
+                                                ? ' · Shared'
+                                                : ''}
+                                            </span>
+                                            {!!list.books?.length && (
+                                              <ul>
+                                                {list.books.map((book) => (
+                                                  <li key={book.id}>{book.title}</li>
+                                                ))}
+                                              </ul>
+                                            )}
+                                          </article>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </section>
+                                </section>
+                              ) : adminUsersLoading ? (
+                                <div className="admin-user-state" role="status">
+                                  Loading registered users...
+                                </div>
+                              ) : adminUsersLoadFailed ? (
+                                <div className="admin-user-state admin-user-message-error">
+                                  <p>{adminUsersMessage}</p>
+                                  <button
+                                    type="button"
+                                    className="admin-user-role-button"
+                                    onClick={() => void loadAdminUsers()}
+                                  >
+                                    Try again
+                                  </button>
+                                </div>
+                              ) : (
+                                <>
+                                  <div className="admin-user-filters">
+                                    <label>
+                                      <span>Search username or email</span>
+                                      <input
+                                        type="search"
+                                        value={adminUserSearch}
+                                        onChange={(event) =>
+                                          setAdminUserSearch(event.target.value)
+                                        }
+                                        placeholder="Search accounts"
+                                      />
+                                    </label>
+                                    <label>
+                                      <span>Filter by role</span>
+                                      <select
+                                        value={adminRoleFilter}
+                                        onChange={(event) =>
+                                          setAdminRoleFilter(
+                                            event.target.value as
+                                              | 'All'
+                                              | 'Reader'
+                                              | 'Admin',
+                                          )
+                                        }
+                                      >
+                                        <option value="All">All roles</option>
+                                        <option value="Reader">Reader</option>
+                                        <option value="Admin">Admin</option>
+                                      </select>
+                                    </label>
+                                    <span className="admin-user-result-count">
+                                      {visibleAdminUsers.length} of {adminUsers.length} users
+                                    </span>
+                                  </div>
+                                  {adminUsers.length === 0 ? (
+                                    <div className="admin-user-state">
+                                      No registered users were found.
+                                    </div>
+                                  ) : visibleAdminUsers.length === 0 ? (
+                                    <div className="admin-user-state">
+                                      No users match these search and role filters.
+                                    </div>
+                                  ) : (
+                                    <div className="admin-user-grid">
+                                      {visibleAdminUsers.map((user) => {
+                                        const isSelf =
+                                          user.email.toLowerCase() ===
+                                          profileEmail.toLowerCase()
+                                        const isBusy = adminUserActionId === user.accountId
+                                        return (
+                                          <article
+                                            className="admin-user-card"
+                                            key={user.accountId}
+                                          >
+                                            <div className="admin-user-card-heading">
+                                              <div>
+                                                <h2>{user.username}</h2>
+                                                <p>{user.email}</p>
+                                              </div>
+                                              <span
+                                                className={`admin-user-role admin-user-role-${user.role.toLowerCase()}`}
+                                              >
+                                                {user.role}
+                                              </span>
+                                            </div>
+                                            <p className="admin-user-id">
+                                              Account ID: <code>{user.accountId}</code>
+                                            </p>
+                                            {user.registrationDate && (
+                                              <p className="admin-user-date">
+                                                Registered{' '}
+                                                {new Date(
+                                                  user.registrationDate,
+                                                ).toLocaleDateString()}
+                                              </p>
+                                            )}
+                                            <div className="admin-user-counts">
+                                              <span>
+                                                <strong>{user.personalBookCount}</strong>{' '}
+                                                personal books
+                                              </span>
+                                              <span>
+                                                <strong>{user.readingListCount}</strong>{' '}
+                                                reading lists
+                                              </span>
+                                            </div>
+                                            <div className="admin-user-card-actions">
+                                              <button
+                                                type="button"
+                                                className="admin-user-role-button"
+                                                onClick={() =>
+                                                  void updateAdminUserRole(user)
+                                                }
+                                                disabled={isBusy}
+                                              >
+                                                Make {user.role === 'Admin' ? 'Reader' : 'Admin'}
+                                              </button>
+                                              <button
+                                                type="button"
+                                                className="admin-user-view-button"
+                                                onClick={() => void openAdminUser(user)}
+                                              >
+                                                View profile
+                                              </button>
+                                              <button
+                                                type="button"
+                                                className="admin-user-delete-button"
+                                                onClick={() => void deleteAdminUser(user)}
+                                                disabled={isBusy || isSelf}
+                                                title={
+                                                  isSelf
+                                                    ? 'You cannot delete your own account here.'
+                                                    : undefined
+                                                }
+                                              >
+                                                Delete
+                                              </button>
+                                            </div>
+                                            {isSelf && (
+                                              <span className="admin-user-self-label">
+                                                Your account
+                                              </span>
+                                            )}
+                                          </article>
+                                        )
+                                      })}
+                                    </div>
+                                  )}
+                                </>
+                              )}
+                            </>
+            ) : (
+              <>
+            <p className="admin-dashboard-eyebrow">SHELVED ADMINISTRATION</p>
+            <h1>Admin Dashboard</h1>
+            <p className="admin-dashboard-welcome">
+              Welcome{profileUsername ? `, ${profileUsername}` : ''}. Choose an area to manage.
+            </p>
+
+            <div className="admin-dashboard-cards">
+              <button
+                type="button"
+                className="admin-dashboard-card"
+                onClick={() => {
+                  setCatalogDeleteMessage('')
+                  setCatalogDeleteFailed(false)
+                  setCatalogEditMessage('')
+                  setCatalogEditFailed(false)
+                  setAdminSection('catalog')
+                }}
+              >
+                <span className="admin-dashboard-card-icon" aria-hidden="true">
+                  {'\u25A4'}
+                </span>
+                <span className="admin-dashboard-card-title">Book Catalog</span>
+                <span className="admin-dashboard-card-description">
+                  Manage the shared book catalog.
+                </span>
+                <span className="admin-dashboard-card-status">Manage catalog</span>
+              </button>
+
+              <section className="admin-google-books-panel">
+                <div className="admin-google-books-heading">
+                  <div>
+                    <span className="admin-dashboard-eyebrow">
+                      SHARED CATALOG
+                    </span>
+                    <h2>Google Books Search</h2>
+                    <p>
+                      Find books by title or author and add them to Shelved’s
+                      shared catalog.
+                    </p>
+                  </div>
+                </div>
+
+                <form
+                  className="admin-google-books-form"
+                  onSubmit={searchBooks}
+                >
+                  <label htmlFor="admin-google-books-query">
+                    Search by title or author
+                  </label>
+                  <div className="admin-google-books-search-row">
+                    <input
+                      id="admin-google-books-query"
+                      type="search"
+                      value={searchQuery}
+                      onChange={(event) => setSearchQuery(event.target.value)}
+                      placeholder="e.g. The Secret History or Donna Tartt"
+                    />
+                    <button
+                      className="primary-button"
+                      type="submit"
+                      disabled={searchLoading || !searchQuery.trim()}
+                    >
+                      {searchLoading ? 'Searching...' : 'Search'}
+                    </button>
+                  </div>
+                </form>
+
+                {catalogLoading && (
+                  <p className="admin-google-books-note" role="status">
+                    Checking the shared catalog...
+                  </p>
+                )}
+                {catalogMessage && (
+                  <p className="admin-google-books-error" role="alert">
+                    {catalogMessage}
+                  </p>
+                )}
+                {searchMessage && (
+                  <p className="admin-google-books-message" role="status">
+                    {searchMessage}
+                  </p>
+                )}
+
+                {searchResults.length > 0 && (
+                  <div className="admin-google-books-results">
+                    {searchResults.map((result) => {
+                      const info = result.volumeInfo ?? {}
+                      const title = info.title ?? 'Untitled'
+                      const author =
+                        info.authors?.join(', ') ?? 'Unknown author'
+                      const cover = (
+                        info.imageLinks?.thumbnail ??
+                        info.imageLinks?.smallThumbnail
+                      )?.replace(/^http:/, 'https:')
+                      const added =
+                        catalogGoogleBookIds.has(result.id) ||
+                        addedBookIds.includes(result.id)
+                      const publishedYear =
+                        info.publishedDate?.match(/^\d{4}/)?.[0]
+
+                      return (
+                        <article
+                          className="admin-google-books-result"
+                          key={result.id}
+                        >
+                          {cover ? (
+                            <img
+                              className="admin-google-books-cover"
+                              src={cover}
+                              alt={`Cover of ${title}`}
+                              loading="lazy"
+                            />
+                          ) : (
+                            <div
+                              className="admin-google-books-cover-placeholder"
+                              aria-label="No cover available"
+                            >
+                              Cover unavailable
+                            </div>
+                          )}
+                          <div className="admin-google-books-result-details">
+                            <h3>{title}</h3>
+                            <p>{author}</p>
+                            {publishedYear && (
+                              <span>Published {publishedYear}</span>
+                            )}
+                          </div>
+                          <button
+                            className="admin-google-books-add-button"
+                            type="button"
+                            onClick={() => void addBookToCatalog(result)}
+                            disabled={
+                              added ||
+                              catalogLoading ||
+                              addingBookId === result.id ||
+                              !info.title
+                            }
+                          >
+                            {added
+                              ? 'Already in catalog'
+                              : addingBookId === result.id
+                                ? 'Adding...'
+                                : 'Add to catalog'}
+                          </button>
+                        </article>
+                      )
+                    })}
+                  </div>
+                )}
+              </section>
+
+              <button
+                type="button"
+                className="admin-dashboard-card"
+                onClick={() => {
+                  setAdminSection('users')
+                  setAdminUserSearch('')
+                  setAdminRoleFilter('All')
+                  void loadAdminUsers()
+                }}
+              >
+                <span className="admin-dashboard-card-icon" aria-hidden="true">
+                  {'\u2637'}
+                </span>
+                <span className="admin-dashboard-card-title">User Management</span>
+                <span className="admin-dashboard-card-description">
+                  Manage Shelved user accounts.
+                </span>
+                <span className="admin-dashboard-card-status">Manage users</span>
+              </button>
+            </div>
+              </>
+            )}
+          </section>
+        </main>
+      )
+    }
 
     if (isLoggedIn)
 
@@ -1437,56 +2888,6 @@
 
 
         .join('')
-
-
-
-      const handleLogout = () => {
-
-
-
-        setIsLoggedIn(false)
-
-        setAuthToken(null)
-
-        setProfileUsername('')
-
-        setProfileEmail('')
-
-        setBooks([])
-
-        setBooksMessage('')
-
-        setSearchResults([])
-
-        setSearchQuery('')
-
-        setAddedBookIds([])
-
-        setSearchMessage('')
-
-
-
-        setIsRegistering(false)
-
-
-
-        setLoginEmail('')
-
-
-
-        setLoginPassword('')
-
-
-
-        setLoginMessage('')
-
-
-
-        setActivePage('Home')
-
-
-
-      }
 
 
 
@@ -1627,77 +3028,23 @@
 
 
               <div className="sidebar-profile">
-
-
-
                 <div className="avatar">{initials || 'U'}</div>
-
-
-
                 <div className="profile-details">
-
-
-
                   <strong>{displayName}</strong>
-
-
-
                   <span>{loginEmail}</span>
-
-
-
                 </div>
-
-
-
               </div>
-
-
-
             </div>
-
-
-
           </aside>
-
-
-
           <section className="workspace">
-
-
-
             <header className="workspace-header">
-
-
-
               <div className="header-spacer" />
-
-
-
               <button
-
-
-
                 type="button"
-
-
-
                 className="top-avatar"
-
-
-
                 aria-label="Open profile"
-
-
-
                 onClick={() => setActivePage('Profile')}
-
-
-
               >
-
-
-
                 {initials || 'U'}
 
 
@@ -2328,9 +3675,12 @@
         const getListDescription = (list: ReadingList) =>
           list.description ?? list.Description ?? ''
         const booksInSelectedList = new Set<string>(
-          (selectedList?.books ?? [])
-            .map((book) => book.id ?? book.Id)
-            .filter((id): id is string => Boolean(id)),
+          [
+            ...(selectedList?.books ?? []).map((book) => book.id ?? book.Id),
+            ...(selectedList?.list.bookIds ??
+              selectedList?.list.BookIds ??
+              []),
+          ].filter((id): id is string => Boolean(id)),
         )
 
         const availableBooks = books.filter((book) => {
@@ -2359,6 +3709,7 @@
                   className="reading-list-back-link"
                   onClick={() => {
                     setSelectedList(null)
+                    setBookToAdd('')
                     setShowListBookPicker(false)
                     setListsMessage('')
                   }}
@@ -2410,102 +3761,111 @@
             {selectedList ? (
               <>
                 {showListBookPicker && (
-                  <div
-                    className="reading-list-add-modal-backdrop"
-                    onClick={(event) => {
-                      if (
-                        event.target === event.currentTarget &&
-                        !listActionLoading
-                      ) {
-                        setShowListBookPicker(false)
-                      }
-                    }}
-                  >
-                    <section
-                      className="reading-list-add-modal"
-                      role="dialog"
-                      aria-modal="true"
-                      aria-labelledby="reading-list-add-title"
-                    >
-                      <header className="reading-list-add-modal-header">
-                        <div>
-                          <span className="reading-list-eyebrow">YOUR BOOKS</span>
-                          <h2 id="reading-list-add-title">Add books to this list</h2>
-                          <p>Only books already saved to your profile can be added here.</p>
-                        </div>
-                        <button
-                          type="button"
-                          className="reading-list-add-modal-close"
-                          aria-label="Close add books dialog"
-                          disabled={listActionLoading}
-                          onClick={() => setShowListBookPicker(false)}
+                  <div className="reading-list-add-panel">
+                    <strong id="reading-list-picker-label">
+                      Add a book from your library
+                    </strong>
+                    {availableBooks.length === 0 ? (
+                      <p>
+                        {books.length === 0
+                          ? 'Your library is empty. Add books from Discover first.'
+                          : 'No personal library books are available to add.'}
+                      </p>
+                    ) : (
+                      <>
+                        <div
+                          className="reading-list-picker-options"
+                          role="group"
+                          aria-labelledby="reading-list-picker-label"
                         >
-                          {'\u00D7'}
-                        </button>
-                      </header>
-
-                      {listsMessage && (
-                        <p className="reading-list-add-feedback" role="status" aria-live="polite">
-                          {listsMessage}
-                        </p>
-                      )}
-
-                      <div className="reading-list-add-modal-body">
-                        {booksLoading ? (
-                          <p className="reading-list-add-empty">Loading your books...</p>
-                        ) : availableBooks.length === 0 ? (
-                          <p className="reading-list-add-empty">
-                            Your library is empty. Add books from Discover first.
-                          </p>
-                        ) : (
-                          availableBooks.map((book) => {
-                            const id = book.id ?? book.Id ?? ''
+                          {availableBooks.map((book) => {
+                            const id = (book.id ?? book.Id) as string
                             const title = book.title ?? book.Title ?? 'Untitled'
-                            const author = book.author ?? book.Author ?? 'Unknown author'
+                            const author =
+                              book.author ?? book.Author ?? 'Unknown author'
                             const cover = book.coverUrl ?? book.CoverUrl
-                            const status = getReadingStatus(book)
                             const alreadyAdded = booksInSelectedList.has(id)
-                            const adding = addingBookToListId === id
 
                             return (
-                              <article
+                              <button
                                 key={id}
-                                className="reading-list-add-book-row"
+                                type="button"
+                                className={`reading-list-picker-option${bookToAdd === id ? ' is-selected' : ''}`}
+                                onClick={() => setBookToAdd(id)}
+                                disabled={listActionLoading || alreadyAdded}
+                                aria-pressed={bookToAdd === id}
+                                aria-label={`${title} by ${author}${alreadyAdded ? ', already in this list' : ''}`}
                               >
-                                <div className="reading-list-add-book-cover">
-                                  {cover && (
-                                    <img
-                                      src={cover}
-                                      alt={`Cover of ${title}`}
-                                      loading="lazy"
-                                      onError={(event) => {
-                                        event.currentTarget.style.display = 'none'
-                                      }}
-                                    />
+                                <span className="reading-list-picker-cover">
+                                  {cover ? (
+                                    <>
+                                      <img
+                                        src={cover}
+                                        alt=""
+                                        loading="lazy"
+                                        onError={(event) => {
+                                          event.currentTarget.style.display =
+                                            'none'
+                                          const fallback =
+                                            event.currentTarget.nextElementSibling
+                                          if (fallback instanceof HTMLElement) {
+                                            fallback.style.display = 'grid'
+                                          }
+                                        }}
+                                      />
+                                      <span
+                                        className="reading-list-picker-cover-placeholder"
+                                        aria-hidden="true"
+                                      >
+                                        {'\u25A4'}
+                                      </span>
+                                    </>
+                                  ) : (
+                                    <span
+                                      className="reading-list-picker-cover-placeholder"
+                                      aria-hidden="true"
+                                    >
+                                      {'\u25A4'}
+                                    </span>
                                   )}
-                                  {!cover && <span>{title}</span>}
-                                </div>
-                                <div className="reading-list-add-book-copy">
-                                  <h3>{title}</h3>
-                                  <p>{author}</p>
-                                  <span className={`reading-list-status reading-list-status-${status === 'Currently reading' ? 'reading' : status === 'Finished' ? 'finished' : 'to-read'}`}>
-                                    {status.toUpperCase()}
+                                </span>
+                                <span className="reading-list-picker-copy">
+                                  <span className="reading-list-picker-title">
+                                    {title}
                                   </span>
-                                </div>
-                                <button
-                                  type="button"
-                                  className={`reading-list-add-book-button${alreadyAdded ? ' is-added' : ''}`}
-                                  disabled={alreadyAdded || listActionLoading || !id}
-                                  onClick={() => void addBookToReadingList(id)}
-                                >
-                                  {alreadyAdded ? 'Added' : adding ? 'Adding...' : '+ Add'}
-                                </button>
-                              </article>
+                                  <span className="reading-list-picker-author">
+                                    {author}
+                                  </span>
+                                </span>
+                                <span className="reading-list-picker-state">
+                                  {alreadyAdded
+                                    ? 'Already added'
+                                    : bookToAdd === id
+                                      ? 'Selected'
+                                      : 'Select'}
+                                </span>
+                              </button>
                             )
-                          })
+                          })}
+                        </div>
+                        {availableBooks.every((book) => {
+                          const id = book.id ?? book.Id
+                          return Boolean(id && booksInSelectedList.has(id))
+                        }) && (
+                          <p className="reading-list-picker-empty">
+                            All of your books are already in this list.
+                          </p>
                         )}
-                      </div>
-                    </section>
+                        <button
+                          type="button"
+                          className="primary-button reading-list-compact-button"
+                          onClick={() => void addBookToReadingList()}
+                          disabled={!bookToAdd || listActionLoading}
+                        >
+                          {listActionLoading ? 'Working...' : 'Add to list'}
+                        </button>
+                      </>
+                    )}
                   </div>
                 )}
 
@@ -2703,121 +4063,189 @@
         )
       })()}
     </section>
-  ) : activePage === 'Discover' ? (
+    ) : activePage === 'Discover' ? (
+      <section className="catalog-page" aria-live="polite">
+        <header className="catalog-page-header">
+          <div>
+            <span className="eyebrow">SHELVED LIBRARY</span>
+            <h1>Book Catalog</h1>
+            <p className="workspace-description">
+              Browse books added to Shelved’s shared catalog.
+            </p>
+          </div>
+          <label className="catalog-search">
+            <span className="sr-only">Search the shared catalog</span>
+            <input
+              type="search"
+              value={catalogSearch}
+              onChange={(event) => setCatalogSearch(event.target.value)}
+              placeholder="Search by title or author"
+            />
+          </label>
+        </header>
 
-                <section className="empty-page discover-page" aria-live="polite">
+        {booksMessage && (
+          <div className="catalog-state catalog-state-error" role="alert">
+            <p>{booksMessage}</p>
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => authToken && void loadMyBooks(authToken)}
+              disabled={booksLoading}
+            >
+              {booksLoading ? 'Checking...' : 'Retry My Books check'}
+            </button>
+          </div>
+        )}
 
-                  <form onSubmit={searchBooks} className="discover-search-form" style={{ width: '100%', maxWidth: 760, margin: '0 auto 28px' }}>
+        {catalogLoading ? (
+          <p className="catalog-state" role="status">
+            Loading the shared catalog...
+          </p>
+        ) : catalogMessage ? (
+          <div className="catalog-state catalog-state-error" role="alert">
+            <p>{catalogMessage}</p>
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => {
+                setCatalogMessage('')
+                setCatalogRefreshKey((current) => current + 1)
+              }}
+            >
+              Try again
+            </button>
+          </div>
+        ) : catalogBooks.length === 0 ? (
+          <div className="empty-page catalog-empty">
+            <div className="empty-page-icon" aria-hidden="true">
+              {'\u25A4'}
+            </div>
+            <h2>The shared catalog is waiting for its first books.</h2>
+            <p>Books added by Shelved administrators will appear here.</p>
+          </div>
+        ) : (
+          (() => {
+            const query = catalogSearch.trim().toLowerCase()
+            const visibleBooks = catalogBooks.filter((book) => {
+              const title = book.title ?? book.Title ?? ''
+              const authors = book.authors ?? book.Authors ?? []
+              return (
+                !query ||
+                title.toLowerCase().includes(query) ||
+                authors.some((author) => author.toLowerCase().includes(query))
+              )
+            })
 
-                    <label htmlFor="book-search" style={{ display: 'block', textAlign: 'left', marginBottom: 10, fontWeight: 600 }}>Search by book title or author</label>
+            if (visibleBooks.length === 0) {
+              return (
+                <p className="catalog-state">
+                  No catalog books match “{catalogSearch.trim()}”.
+                </p>
+              )
+            }
 
-                    <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+            return (
+              <div className="catalog-book-grid">
+                {visibleBooks.map((book, index) => {
+                  const id = book.id ?? book.Id ?? `${book.title}-${index}`
+                  const title = book.title ?? book.Title ?? 'Untitled'
+                  const authors = book.authors ?? book.Authors ?? []
+                  const cover =
+                    book.coverImageUrl ?? book.CoverImageUrl ?? ''
+                  const publishedDate =
+                    book.publishedDate ?? book.PublishedDate ?? ''
+                  const publishedYear = publishedDate.match(/^\d{4}/)?.[0]
+                  const catalogBookId = book.id ?? book.Id
+                  const alreadyInMyBooks = Boolean(
+                    catalogBookId &&
+                      books.some(
+                        (personalBook) =>
+                          (personalBook.catalogBookId ??
+                            personalBook.CatalogBookId) === catalogBookId,
+                      ),
+                  )
+                  const addMessage = catalogBookId
+                    ? catalogBookAddMessages[catalogBookId]
+                    : undefined
 
-                      <input
+                  return (
+                    <article className="catalog-book-card" key={id}>
+                      {cover ? (
+                        <img
+                          className="catalog-book-cover"
+                          src={cover.replace(/^http:/, 'https:')}
+                          alt={`Cover of ${title}`}
+                          loading="lazy"
+                        />
+                      ) : (
+                        <div
+                          className="catalog-book-cover-placeholder"
+                          aria-label="No cover available"
+                        >
+                          {'\u25A4'}
+                        </div>
+                      )}
+                      <div className="catalog-book-details">
+                        <h2>{title}</h2>
+                        <p>
+                          {authors.length > 0
+                            ? authors.join(', ')
+                            : 'Unknown author'}
+                        </p>
+                        {publishedYear && (
+                          <span>Published {publishedYear}</span>
+                        )}
+                      </div>
+                      <div className="catalog-book-actions">
+                        <button
+                          type="button"
+                          className="catalog-add-button"
+                          onClick={() =>
+                            catalogBookId &&
+                            void addCatalogBookToMyBooks(
+                              catalogBookId,
+                              title,
+                            )
+                          }
+                          disabled={
+                            !catalogBookId ||
+                            alreadyInMyBooks ||
+                            booksLoading ||
+                            addingCatalogBookId !== null
+                          }
+                        >
+                          {alreadyInMyBooks
+                            ? 'Already in My Books'
+                            : addingCatalogBookId === catalogBookId
+                              ? 'Adding...'
+                              : booksLoading
+                                ? 'Checking My Books...'
+                                : 'Add to My Books'}
+                        </button>
+                        {addMessage && (
+                          <span
+                            className={
+                              addMessage.failed
+                                ? 'catalog-add-feedback catalog-add-error'
+                                : 'catalog-add-feedback'
+                            }
+                            role={addMessage.failed ? 'alert' : 'status'}
+                          >
+                            {addMessage.message}
+                          </span>
+                        )}
+                      </div>
+                    </article>
+                  )
+                })}
+              </div>
+            )
+          })()
+        )}
+      </section>
 
-                        id="book-search"
-
-                        type="search"
-
-                        value={searchQuery}
-
-                        onChange={(event) => setSearchQuery(event.target.value)}
-
-                        placeholder="e.g. The Secret History or Donna Tartt"
-
-                        style={{ flex: '1 1 280px', minWidth: 0, padding: '15px 17px', border: '1px solid #deded6', borderRadius: 12, background: '#fff', font: 'inherit' }}
-
-                      />
-
-                      <button className="primary-button" type="submit" disabled={searchLoading || !searchQuery.trim() || !authToken} style={{ width: 'auto', minWidth: 130, padding: '14px 24px' }}>
-
-                        {searchLoading ? 'Searching...' : 'Search books'}
-
-                      </button>
-
-                    </div>
-
-                  </form>
-
-
-
-                  {searchMessage && <p role="status" style={{ margin: '0 auto 20px', maxWidth: 760 }}>{searchMessage}</p>}
-
-
-
-                  {searchResults.length > 0 ? (
-
-                    <div className="discover-results" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 18, textAlign: 'left' }}>
-
-                      {searchResults.map((result) => {
-
-                        const info = result.volumeInfo ?? {}
-
-                        const title = info.title ?? 'Untitled'
-
-                        const author = info.authors?.join(', ') ?? 'Unknown author'
-
-                        const cover = (info.imageLinks?.thumbnail ?? info.imageLinks?.smallThumbnail)?.replace('http\://', 'https\://')
-
-                        const added = addedBookIds.includes(result.id)
-
-                        return (
-
-                          <article key={result.id} style={{ display: 'flex', flexDirection: 'column', gap: 12, padding: 18, border: '1px solid #e7e5dc', borderRadius: 16, background: '#fff' }}>
-
-                            {cover ? (
-
-                              <img src={cover} alt={`Cover of ${title}`} loading="lazy" style={{ display: 'block', height: 190, maxWidth: '100%', width: 'auto', objectFit: 'contain', alignSelf: 'center' }} />
-
-                            ) : (
-
-                              <div aria-label="No cover available" style={{ height: 190, width: 125, alignSelf: 'center', display: 'grid', placeItems: 'center', padding: 12, boxSizing: 'border-box', borderRadius: 8, background: '#e6eee8', color: '#315f50', textAlign: 'center' }}>Cover unavailable</div>
-
-                            )}
-
-                            <div style={{ flex: 1 }}>
-
-                              <h2 style={{ fontSize: 19, lineHeight: 1.3, margin: '4px 0 8px' }}>{title}</h2>
-
-                              <p style={{ margin: '0 0 8px', color: '#77766f' }}>{author}</p>
-
-                              {info.publishedDate && <p style={{ margin: '0 0 8px', fontSize: 13, color: '#77766f' }}>Published {info.publishedDate}</p>}
-
-                              {info.description && <p style={{ margin: 0, fontSize: 14, lineHeight: 1.5, color: '#62645e' }}>{info.description.replace(/<[^>]\*>/g, '').slice(0, 180)}{info.description.length > 180 ? '\u2026' : ''}</p>}
-
-                            </div>
-
-                            <button className="primary-button" type="button" onClick={() => void addBookToLibrary(result)} disabled={added || addingBookId === result.id || !info.title}>
-
-                              {added ? 'Added to My Books' : addingBookId === result.id ? 'Adding...' : 'Add to My Books'}
-
-                            </button>
-
-                          </article>
-
-                        )
-
-                      })}
-
-                    </div>
-
-                  ) : !searchLoading && !searchMessage ? (
-
-                    <div style={{ padding: '26px 12px' }}>
-
-                      <div className="empty-page-icon" aria-hidden="true">{'\u21AA'}  </div>
-
-                      <h2>Find your next favourite read.</h2>
-
-                      <p>Search millions of books and add the ones you want to keep in your personal library.</p>
-
-                    </div>
-
-                  ) : null}
-
-                </section>
-
-              ) : activePage === 'Profile' ? (
+                ) : activePage === 'Profile' ? (
                 <div className="profile-page">
                   <span className="eyebrow">YOUR SPACE</span>
                   <h1>Profile &amp; settings</h1>

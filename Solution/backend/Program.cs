@@ -7,6 +7,8 @@ using Microsoft.OpenApi;
 using Shelved.Authentication;
 using Microsoft.AspNetCore.Authentication;
 using Shelved.Services;
+using Shelved.Models;
+using Microsoft.AspNetCore.Identity;
 
 var builder = WebApplication.CreateBuilder(args);
 //connection from the firebase to our backend, that between the () is the ID of the firebase project
@@ -18,6 +20,7 @@ builder.Services.AddSingleton<FirestoreDb>(_=>FirestoreDb.Create("shelved-f3e7d"
 
 builder.Services.AddHttpClient();
 builder.Services.AddHttpClient<GoogleBooksService>();
+builder.Services.AddSingleton<IPasswordHasher<User>, PasswordHasher<User>>();
 
 var jwtKey = builder.Configuration["Jwt:Key"];
 
@@ -45,6 +48,7 @@ builder.Services
             ValidateIssuerSigningKey = true,
             IssuerSigningKey = new SymmetricSecurityKey(
                 System.Text.Encoding.UTF8.GetBytes(jwtKey)),
+            RoleClaimType = System.Security.Claims.ClaimTypes.Role,
             ValidateLifetime = true,
             ClockSkew = TimeSpan.FromMinutes(1)
         };
@@ -52,10 +56,16 @@ builder.Services
     .AddScheme<AuthenticationSchemeOptions, GoogleTokenHandler>(
         "Google", _ => { });
 
-builder.Services.AddAuthorization();
-builder.Services.AddAuthorization();
+builder.Services.AddAuthorization(options =>
+{
+    options.AddPolicy("ReaderOrAdmin", policy =>
+        policy.RequireRole(User.ReaderRole, User.AdminRole));
+    options.AddPolicy("AdminOnly", policy =>
+        policy.RequireRole(User.AdminRole));
+});
 builder.Services.AddSingleton<IBookRepository, FirestoreBookRepository>();
 builder.Services.AddSingleton<IReadingListRepository, FirestoreReadingListRepository>();
+builder.Services.AddSingleton<ICatalogBookRepository, FirestoreCatalogBookRepository>();
 
 
 

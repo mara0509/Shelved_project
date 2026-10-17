@@ -34,6 +34,17 @@ public class FirestoreReadingListRepository : IReadingListRepository
             : null;
     }
 
+    public async Task<List<ReadingList>> GetAllAsync()
+    {
+        var snapshot = await _firestore
+            .Collection("readingLists")
+            .GetSnapshotAsync();
+
+        return snapshot.Documents
+            .Select(document => document.ConvertTo<ReadingList>())
+            .ToList();
+    }
+
     public async Task<List<ReadingList>> GetByOwnerIdAsync(
         string ownerId)
     {
@@ -63,5 +74,24 @@ public class FirestoreReadingListRepository : IReadingListRepository
             .Collection("readingLists")
             .Document(id)
             .DeleteAsync();
+    }
+
+    public async Task DeleteByOwnerIdAsync(string ownerId)
+    {
+        var snapshot = await _firestore
+            .Collection("readingLists")
+            .WhereEqualTo("OwnerId", ownerId)
+            .GetSnapshotAsync();
+
+        foreach (var chunk in snapshot.Documents.Chunk(400))
+        {
+            var batch = _firestore.StartBatch();
+            foreach (var document in chunk)
+            {
+                batch.Delete(document.Reference);
+            }
+
+            await batch.CommitAsync();
+        }
     }
 }

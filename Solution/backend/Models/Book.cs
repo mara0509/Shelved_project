@@ -19,6 +19,9 @@ public class Book
     public string OwnerId { get; set; } = string.Empty;
 
     [FirestoreProperty]
+    public string? CatalogBookId { get; set; }
+
+    [FirestoreProperty]
     public string CoverUrl { get; set; } = string.Empty;
 
     [FirestoreProperty]

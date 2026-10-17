@@ -7,6 +7,7 @@ using Shelved.Repositories;
 using Shelved.Dtos;
 using Shelved.Models;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Identity;
 
 namespace Shelved.Controllers;
 
@@ -17,16 +18,22 @@ public class AuthController : ControllerBase
     private readonly IUserRepository _repo;
     private readonly IConfiguration _configuration;
     private readonly IBookRepository _bookRepo;
+    private readonly IReadingListRepository _readingListRepo;
+    private readonly IPasswordHasher<User> _passwordHasher;
 
     public AuthController(
     IUserRepository repo,
     IBookRepository bookRepo,
-    IConfiguration configuration)
-{
-    _repo = repo;
-    _bookRepo = bookRepo;
-    _configuration = configuration;
-}
+    IReadingListRepository readingListRepo,
+    IConfiguration configuration,
+    IPasswordHasher<User> passwordHasher)
+    {
+        _repo = repo;
+        _bookRepo = bookRepo;
+        _readingListRepo = readingListRepo;
+        _configuration = configuration;
+        _passwordHasher = passwordHasher;
+    }
 
     [HttpPost("Register")]
     public async Task<IActionResult> Register(RegisterDto dto)
@@ -40,10 +47,13 @@ public class AuthController : ControllerBase
         if (await _repo.PasswordExistsAsync(dto.Password))
             return Conflict("Password is already in use.");
 
+        var passwordHash = _passwordHasher.HashPassword(
+            new User(),
+            dto.Password);
         var user = await _repo.AddAsync(
             dto.Username,
             dto.Email,
-            dto.Password);
+            passwordHash);
 
         return Ok(new
         {
@@ -59,13 +69,51 @@ public class AuthController : ControllerBase
             await _repo.FindByUsernameAsync(dto.UsernameOrEmail)
             ?? await _repo.FindByEmailAsync(dto.UsernameOrEmail);
 
-        if (user is null || user.Password != dto.Password)
+        if (user is null)
+            return Unauthorized("Invalid username/email or password.");
+
+        PasswordVerificationResult verificationResult;
+        var isLegacyPassword = user.PasswordFormat is null;
+
+        if (isLegacyPassword)
+        {
+            verificationResult = string.Equals(
+                user.Password,
+                dto.Password,
+                StringComparison.Ordinal)
+                ? PasswordVerificationResult.SuccessRehashNeeded
+                : PasswordVerificationResult.Failed;
+        }
+        else if (user.PasswordFormat == Shelved.Models.User.IdentityPasswordFormat)
+        {
+            verificationResult = _passwordHasher.VerifyHashedPassword(
+                user,
+                user.Password,
+                dto.Password);
+        }
+        else
+        {
+            verificationResult = PasswordVerificationResult.Failed;
+        }
+
+        if (verificationResult == PasswordVerificationResult.Failed)
             return Unauthorized("Invalid username/email or password.");
 
         if (string.IsNullOrWhiteSpace(user.DocumentId))
             return StatusCode(
                 StatusCodes.Status500InternalServerError,
                 "The user account is missing its Firestore document ID.");
+
+        if (verificationResult == PasswordVerificationResult.SuccessRehashNeeded)
+        {
+            var passwordHash = _passwordHasher.HashPassword(user, dto.Password);
+            await _repo.UpdatePasswordAsync(
+                user.DocumentId,
+                passwordHash,
+                Shelved.Models.User.IdentityPasswordFormat);
+            user.Password = passwordHash;
+            user.PasswordFormat = Shelved.Models.User.IdentityPasswordFormat;
+        }
 
         var jwtKey = _configuration["Jwt:Key"];
 
@@ -74,13 +122,30 @@ public class AuthController : ControllerBase
                 StatusCodes.Status500InternalServerError,
                 "Authentication is not configured.");
 
+        var configuredAdminEmail = _configuration["Admin:Email"];
+        var isConfiguredAdmin = !string.IsNullOrWhiteSpace(configuredAdminEmail) &&
+                                string.Equals(
+                                    user.Email.Trim(),
+                                    configuredAdminEmail.Trim(),
+                                    StringComparison.OrdinalIgnoreCase);
+        var role = isConfiguredAdmin || user.Role == Shelved.Models.User.AdminRole
+            ? Shelved.Models.User.AdminRole
+            : Shelved.Models.User.ReaderRole;
+
+        if (user.Role != role)
+        {
+            await _repo.SetRoleAsync(user.DocumentId, role);
+            user.Role = role;
+        }
+
         var claims = new[]
         {
             new Claim(
                 ClaimTypes.NameIdentifier,
                 user.DocumentId),
             new Claim(ClaimTypes.Name, user.Username),
-            new Claim(ClaimTypes.Email, user.Email)
+            new Claim(ClaimTypes.Email, user.Email),
+            new Claim(ClaimTypes.Role, role)
         };
 
         var key = new SymmetricSecurityKey(
@@ -104,7 +169,8 @@ public class AuthController : ControllerBase
             user = new
             {
                 username = user.Username,
-                email = user.Email
+                email = user.Email,
+                role = user.Role
             }
         });
     }
@@ -126,8 +192,14 @@ public class AuthController : ControllerBase
         if (account is null)
             return NotFound("The account was not found.");
 
-        // Remove the account's books first, then its user document.
+        if (account.Role == Shelved.Models.User.AdminRole)
+        {
+            return Conflict(
+                "Admin accounts cannot be deleted through self-service. Ask another Admin to manage this account.");
+        }
+
         await _bookRepo.DeleteByOwnerIdAsync(documentId);
+        await _readingListRepo.DeleteByOwnerIdAsync(documentId);
         await _repo.DeleteByDocumentIdAsync(documentId);
 
         return NoContent();
@@ -165,6 +237,25 @@ public class AuthController : ControllerBase
         if (account is null)
             return NotFound("Account not found.");
 
+        var configuredAdminEmail = _configuration["Admin:Email"]?.Trim();
+        if (!string.IsNullOrWhiteSpace(configuredAdminEmail) &&
+            (string.Equals(
+                 account.Email.Trim(),
+                 configuredAdminEmail,
+                 StringComparison.OrdinalIgnoreCase) ||
+             string.Equals(
+                 email,
+                 configuredAdminEmail,
+                 StringComparison.OrdinalIgnoreCase)) &&
+            !string.Equals(
+                account.Email.Trim(),
+                email,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return Conflict(
+                "The configured administrator email cannot be changed while it is reserved for Admin provisioning.");
+        }
+
         var existingUsername =
             await _repo.FindByUsernameAsync(username);
 
@@ -183,13 +274,15 @@ public class AuthController : ControllerBase
             return Conflict("Email is already registered.");
         }
 
+        var passwordHash = string.IsNullOrWhiteSpace(dto.Password)
+            ? null
+            : _passwordHasher.HashPassword(account, dto.Password);
+
         await _repo.UpdateAccountAsync(
             documentId,
             username,
             email,
-            string.IsNullOrWhiteSpace(dto.Password)
-                ? null
-                : dto.Password,
+            passwordHash,
             dto.ReadingGoal);
 
         return Ok(new
