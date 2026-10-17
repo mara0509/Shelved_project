@@ -590,6 +590,75 @@
   opacity: .7;
 }
 
+.book-detail-card {
+  align-items: start;
+}
+
+.book-detail-cover {
+  position: sticky;
+  top: 24px;
+}
+
+.book-detail-content {
+  min-width: 0;
+}
+
+.book-about-section {
+  margin: 28px 0 0;
+  padding: 22px 24px;
+  border: 1px solid #e5e8df;
+  border-radius: 16px;
+  background: #f7f8f4;
+}
+
+.book-about-section h3 {
+  margin: 0 0 10px;
+  color: #20392e;
+  font-family: 'Lora', Georgia, serif;
+  font-size: 21px;
+  font-weight: 600;
+}
+
+.book-about-section > p {
+  margin: 0;
+  color: #626b62;
+  font-size: 14px;
+  line-height: 1.8;
+  white-space: pre-line;
+}
+
+.book-import-details-button {
+  margin-top: 16px;
+  padding: 10px 14px;
+  border: 1px solid #9eb3a0;
+  border-radius: 10px;
+  background: #fff;
+  color: #315f50;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.book-import-details-button:hover:not(:disabled) {
+  background: #eef4ee;
+}
+
+.book-import-details-button:disabled {
+  opacity: .65;
+  cursor: wait;
+}
+
+.book-about-section > p.book-details-feedback {
+  margin-top: 12px;
+  color: #315f50;
+  font-size: 13px;
+}
+
+.book-about-section > p.book-details-feedback.is-error {
+  color: #9b3831;
+}
+
 .book-rating-display {
   margin-top: 26px;
 }
@@ -3641,6 +3710,29 @@
 }
 
 @media (max-width: 760px) {
+  .book-detail-card {
+    grid-template-columns: minmax(0, 1fr) !important;
+    gap: 24px !important;
+    padding: 20px !important;
+  }
+
+  .book-detail-cover {
+    position: static;
+    width: min(100%, 280px);
+    height: 360px !important;
+    margin: 0 auto;
+  }
+
+  .book-detail-content > h2 {
+    font-size: clamp(28px, 8vw, 38px) !important;
+    overflow-wrap: anywhere;
+  }
+
+  .book-about-section {
+    margin-top: 24px;
+    padding: 18px;
+  }
+
   .admin-dashboard-cards {
     grid-template-columns: 1fr;
   }

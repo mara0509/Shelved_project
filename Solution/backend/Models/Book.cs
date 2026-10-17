@@ -22,6 +22,9 @@ public class Book
     public string? CatalogBookId { get; set; }
 
     [FirestoreProperty]
+    public string? ExternalGoogleBooksId { get; set; }
+
+    [FirestoreProperty]
     public string CoverUrl { get; set; } = string.Empty;
 
     [FirestoreProperty]

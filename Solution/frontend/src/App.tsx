@@ -227,6 +227,12 @@
     const [selectedBookId, setSelectedBookId] = useState<string | null>(null)
     const [bookUpdateMessage, setBookUpdateMessage] = useState('')
     const [updatingBook, setUpdatingBook] = useState(false)
+    const [importingDetailsBookId, setImportingDetailsBookId] = useState<
+      string | null
+    >(null)
+    const [bookDetailsImportMessage, setBookDetailsImportMessage] = useState('')
+    const [bookDetailsImportFailed, setBookDetailsImportFailed] =
+      useState(false)
     const [ratingModalBookId, setRatingModalBookId] = useState<string | null>(null)
     const [ratingDraft, setRatingDraft] = useState(0)
     const promptedRatingBookIds = useRef(new Set<string>())
@@ -1016,6 +1022,88 @@
         return false
       } finally {
         setUpdatingBook(false)
+      }
+    }
+
+    const importBookDetails = async (book: ShelvedBook) => {
+      const id = book.id ?? book.Id
+      if (!authToken || !id) {
+        setBookDetailsImportFailed(true)
+        setBookDetailsImportMessage(
+          'Could not identify this book. Refresh your library and try again.',
+        )
+        return
+      }
+
+      setImportingDetailsBookId(id)
+      setBookDetailsImportMessage('')
+      setBookDetailsImportFailed(false)
+
+      try {
+        const response = await fetch(
+          `/Books/${encodeURIComponent(id)}/import-details`,
+          {
+            method: 'POST',
+            headers: { Authorization: 'Bearer ' + authToken },
+          },
+        )
+        const responseText = await response.text()
+        if (!response.ok) {
+          let message = responseText
+          try {
+            const parsed = JSON.parse(responseText)
+            message =
+              typeof parsed === 'string'
+                ? parsed
+                : parsed.message ?? parsed.title ?? responseText
+          } catch {
+            if (!message) {
+              message = `Could not import book details (${response.status}).`
+            }
+          }
+          throw new Error(
+            message ||
+              `Could not import book details (${response.status}).`,
+          )
+        }
+
+        let imported: { description?: string; coverUrl?: string }
+        try {
+          imported = JSON.parse(responseText) as {
+            description?: string
+            coverUrl?: string
+          }
+        } catch {
+          throw new Error(
+            'The server returned an unexpected response while importing book details.',
+          )
+        }
+
+        const updatedBook = {
+          ...book,
+          description:
+            imported.description ?? book.description ?? book.Description ?? '',
+          coverUrl: imported.coverUrl ?? book.coverUrl ?? book.CoverUrl ?? '',
+        }
+        setBooks((current) =>
+          current.map((item) =>
+            (item.id ?? item.Id) === id ? updatedBook : item,
+          ),
+        )
+        setBookDetailsImportMessage(
+          updatedBook.description.trim()
+            ? 'Book details imported and saved.'
+            : 'Description not available yet. No synopsis was added.',
+        )
+      } catch (error) {
+        setBookDetailsImportFailed(true)
+        setBookDetailsImportMessage(
+          error instanceof Error
+            ? error.message
+            : 'Could not import book details. Please try again.',
+        )
+      } finally {
+        setImportingDetailsBookId(null)
       }
     }
 
@@ -3195,6 +3283,7 @@
                           <p role="alert">{booksMessage}</p>
                         ) : selectedBook ? (
                           <article
+                            className="book-detail-card"
                             style={{
                               display: 'grid',
                               gridTemplateColumns: 'minmax(180px, 290px) minmax(0, 1fr)',
@@ -3206,6 +3295,7 @@
                             }}
                           >
                             <div
+                              className="book-detail-cover"
                               style={{
                                 height: 420,
                                 overflow: 'hidden',
@@ -3234,7 +3324,7 @@
                               })()}
                             </div>
 
-                            <div>
+                            <div className="book-detail-content">
                               <span className="eyebrow">BOOK DETAILS</span>
                               <h2 style={{ fontFamily: 'Georgia, serif', fontSize: 38 }}>
                                 {getTitle(selectedBook)}
@@ -3242,6 +3332,54 @@
                               <p style={{ fontSize: 19, color: '#77766f' }}>
                                 {getAuthor(selectedBook)}
                               </p>
+
+                              <section
+                                className="book-about-section"
+                                aria-labelledby="book-about-heading"
+                              >
+                                <h3 id="book-about-heading">About this book</h3>
+                                <p>
+                                  {(selectedBook.description ??
+                                    selectedBook.Description ??
+                                    '').trim() ||
+                                    'Description not available yet.'}
+                                </p>
+                                {!(
+                                  selectedBook.description ??
+                                  selectedBook.Description ??
+                                  ''
+                                ).trim() && (
+                                  <button
+                                    type="button"
+                                    className="book-import-details-button"
+                                    onClick={() =>
+                                      void importBookDetails(selectedBook)
+                                    }
+                                    disabled={
+                                      importingDetailsBookId ===
+                                        (selectedBook.id ?? selectedBook.Id) ||
+                                      updatingBook
+                                    }
+                                  >
+                                    {importingDetailsBookId ===
+                                    (selectedBook.id ?? selectedBook.Id)
+                                      ? 'Importing details...'
+                                      : 'Import book details'}
+                                  </button>
+                                )}
+                                {bookDetailsImportMessage && (
+                                  <p
+                                    className={`book-details-feedback${bookDetailsImportFailed ? ' is-error' : ''}`}
+                                    role={
+                                      bookDetailsImportFailed
+                                        ? 'alert'
+                                        : 'status'
+                                    }
+                                  >
+                                    {bookDetailsImportMessage}
+                                  </p>
+                                )}
+                              </section>
 
                               <hr style={{ border: 0, borderTop: '1px solid #e7e5dc', margin: '26px 0' }} />
 
